@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" fill="none">
+  <rect width="512" height="512" rx="128" fill="#0B0E14"/>
+  <rect x="24" y="24" width="464" height="464" rx="104" stroke="#1E293B" stroke-width="4"/>
+  
+  <!-- Candlesticks -->
+  <!-- Candle 1: Bullish Green -->
+  <line x1="120" y1="160" x2="120" y2="380" stroke="#10B981" stroke-width="6" stroke-linecap="round"/>
+  <rect x="96" y="200" width="48" height="130" rx="8" fill="#10B981"/>
+  
+  <!-- Candle 2: Bearish Red -->
+  <line x1="200" y1="190" x2="200" y2="360" stroke="#EF4444" stroke-width="6" stroke-linecap="round"/>
+  <rect x="176" y="220" width="48" height="100" rx="8" fill="#EF4444"/>
+  
+  <!-- Candle 3: Bullish Green -->
+  <line x1="280" y1="130" x2="280" y2="340" stroke="#10B981" stroke-width="6" stroke-linecap="round"/>
+  <rect x="256" y="170" width="48" height="120" rx="8" fill="#10B981"/>
+  
+  <!-- Candle 4: Strong Bullish -->
+  <line x1="360" y1="90" x2="360" y2="300" stroke="#10B981" stroke-width="6" stroke-linecap="round"/>
+  <rect x="336" y="110" width="48" height="130" rx="8" fill="#10B981"/>
+
+  <!-- Trend Pulse Line -->
+  <path d="M70 360 L160 260 L230 310 L330 180 L440 90" stroke="#38BDF8" stroke-width="12" stroke-linecap="round" stroke-linejoin="round"/>
+  <!-- Glowing Target Node -->
+  <circle cx="440" cy="90" r="14" fill="#38BDF8"/>
+  <circle cx="440" cy="90" r="26" stroke="#38BDF8" stroke-width="4" stroke-opacity="0.5"/>
+</svg>

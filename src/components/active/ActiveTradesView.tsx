@@ -1,0 +1,438 @@
+import React, { useState, useMemo } from 'react';
+import { useCryptoStore } from '../../store/useCryptoStore';
+import { PortfolioId, PaperTrade } from '../../types/crypto';
+import { PORTFOLIO_CONFIGS } from '../../services/paperTradingEngine';
+import { formatPrice } from '../../utils/formatters';
+import { CoinIcon } from '../common/CoinIcon';
+import { getPatternEmoji } from '../../utils/cryptoLogos';
+import {
+  TrendingUp,
+  TrendingDown,
+  Target,
+  Shield,
+  Activity,
+  Layers,
+  ArrowUpRight,
+  ArrowDownRight,
+  XCircle,
+  Clock,
+  Sparkles,
+  Zap,
+} from 'lucide-react';
+
+export const ActiveTradesView: React.FC = () => {
+  const {
+    portfolios,
+    activePortfolioId,
+    setActivePortfolioId,
+    tickers,
+    wsConnected,
+    closePaperTradeManually,
+    setSelectedSymbol,
+    setDetailModalOpen,
+  } = useCryptoStore();
+
+  const [selectedPid, setSelectedPid] = useState<PortfolioId | 'ALL'>('ALL');
+  const [closingId, setClosingId] = useState<string | null>(null);
+
+  // Get all active OPEN trades across selected portfolio(s)
+  const openTrades = useMemo(() => {
+    const list: PaperTrade[] = [];
+    const pIds: PortfolioId[] = ['PORTFOLIO_A', 'PORTFOLIO_B', 'PORTFOLIO_C'];
+
+    pIds.forEach((pid) => {
+      if (selectedPid === 'ALL' || selectedPid === pid) {
+        const p = portfolios[pid];
+        if (p?.trades) {
+          // Strictly open trades only!
+          p.trades.forEach((t) => {
+            if (t.status === 'OPEN') {
+              list.push(t);
+            }
+          });
+        }
+      }
+    });
+
+    // Smart Sorting:
+    // Sort open trades descending:
+    // Trades closest to TP1 or highest profit (PnL) at the TOP.
+    // Losing trades or trades that haven't moved at the BOTTOM.
+    return list.sort((a, b) => {
+      // Calculate progress towards TP1 for trade A
+      const entryA = a.actualEntryPrice || a.entryPrice;
+      const curA = a.currentPrice || tickers[a.symbol]?.lastPrice || entryA;
+      const tp1A = a.tp1;
+      let progressA = 0;
+      if (a.side === 'LONG' && tp1A > entryA) {
+        progressA = ((curA - entryA) / (tp1A - entryA)) * 100;
+      } else if (a.side === 'SHORT' && tp1A < entryA) {
+        progressA = ((entryA - curA) / (entryA - tp1A)) * 100;
+      }
+
+      // Calculate progress towards TP1 for trade B
+      const entryB = b.actualEntryPrice || b.entryPrice;
+      const curB = b.currentPrice || tickers[b.symbol]?.lastPrice || entryB;
+      const tp1B = b.tp1;
+      let progressB = 0;
+      if (b.side === 'LONG' && tp1B > entryB) {
+        progressB = ((curB - entryB) / (tp1B - entryB)) * 100;
+      } else if (b.side === 'SHORT' && tp1B < entryB) {
+        progressB = ((entryA - curB) / (entryB - tp1B)) * 100;
+      }
+
+      // Combined ranking score: weight PnL and closeness to TP1
+      const scoreA = (a.netPnl || 0) * 10 + progressA;
+      const scoreB = (b.netPnl || 0) * 10 + progressB;
+
+      return scoreB - scoreA;
+    });
+  }, [portfolios, selectedPid, tickers]);
+
+  // Overall Portfolio summaries for the 3 portfolios
+  const portfolioSummaries = useMemo(() => {
+    const pIds: PortfolioId[] = ['PORTFOLIO_A', 'PORTFOLIO_B', 'PORTFOLIO_C'];
+    return pIds.map((pid) => {
+      const p = portfolios[pid];
+      const cfg = PORTFOLIO_CONFIGS[pid];
+      const open = p?.trades?.filter((t) => t.status === 'OPEN') || [];
+      const floatingPnl = open.reduce((acc, t) => acc + (t.netPnl || 0), 0);
+      const balance = p?.account?.balance || 1000;
+      const equity = Math.max(0, balance + floatingPnl);
+      return {
+        pid,
+        cfg,
+        balance,
+        equity,
+        floatingPnl,
+        openCount: open.length,
+      };
+    });
+  }, [portfolios]);
+
+  const handleManualClose = (trade: PaperTrade) => {
+    setClosingId(trade.id);
+    const livePrice = tickers[trade.symbol]?.lastPrice || trade.currentPrice;
+    closePaperTradeManually(trade.id, livePrice);
+    setTimeout(() => setClosingId(null), 500);
+  };
+
+  const handleOpenChart = (symbol: string) => {
+    setSelectedSymbol(symbol);
+    setDetailModalOpen(true);
+  };
+
+  return (
+    <div className="flex flex-col gap-4 p-4 pb-24 max-w-5xl mx-auto w-full text-right" dir="rtl">
+      {/* 1. Header & Quick Summary */}
+      <div className="flex flex-wrap items-center justify-between gap-3 bg-[#121824] border border-slate-800 rounded-2xl p-4 shadow-xl">
+        <div className="flex items-center gap-3">
+          <div className="w-10 h-10 rounded-2xl bg-gradient-to-tr from-emerald-500/20 to-sky-500/20 border border-emerald-500/30 flex items-center justify-center text-emerald-400 shadow-md">
+            <Activity className="w-5 h-5 text-emerald-400 animate-pulse" />
+          </div>
+          <div>
+            <div className="flex items-center gap-2">
+              <h1 className="text-base md:text-lg font-black text-white">
+                الصفقات المفتوحة حالياً (Active Positions)
+              </h1>
+              <span className="flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 text-[10px] font-bold">
+                <span className={`w-2 h-2 rounded-full ${wsConnected ? 'bg-emerald-400 animate-ping' : 'bg-slate-500'}`} />
+                <span>مباشر 500ms</span>
+              </span>
+            </div>
+            <p className="text-xs text-slate-400 mt-0.5">
+              مرتبة ذكياً: الصفقات الأقرب للهدف الأول (TP1) والأعلى ربحاً في الأعلى دائماً
+            </p>
+          </div>
+        </div>
+
+        <div className="flex items-center gap-2">
+          <span className="px-3 py-1 rounded-xl bg-slate-900 border border-slate-800 text-xs font-bold font-num text-slate-300">
+            الصفقات النشطة: <span className="text-emerald-400 font-black">{openTrades.length}</span>
+          </span>
+        </div>
+      </div>
+
+      {/* 2. Three Portfolio Cards at the Top */}
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+        {portfolioSummaries.map((p) => {
+          const isSelected = selectedPid === p.pid;
+          return (
+            <button
+              key={p.pid}
+              onClick={() => setSelectedPid(isSelected ? 'ALL' : p.pid)}
+              className={`p-3.5 rounded-2xl text-right transition-all border ${
+                isSelected
+                  ? 'bg-slate-800/90 border-emerald-500 shadow-lg shadow-emerald-950/20 ring-1 ring-emerald-500/50'
+                  : 'bg-[#121824] border-slate-800 hover:border-slate-700'
+              }`}
+            >
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-xs font-bold text-slate-200">{p.cfg.name}</span>
+                <span className={`text-[10px] px-2 py-0.5 rounded-md font-bold font-num ${
+                  p.cfg.id === 'PORTFOLIO_A'
+                    ? 'bg-rose-500/20 text-rose-300'
+                    : p.cfg.id === 'PORTFOLIO_B'
+                    ? 'bg-amber-500/20 text-amber-300'
+                    : 'bg-emerald-500/20 text-emerald-300'
+                }`}>
+                  رافعة {p.cfg.leverage}x
+                </span>
+              </div>
+
+              <div className="flex items-baseline justify-between mb-1 font-num">
+                <span className="text-[11px] text-slate-400">القيمة الإجمالية:</span>
+                <span className="text-base font-black text-white">
+                  ${p.equity.toFixed(2)}
+                </span>
+              </div>
+
+              <div className="flex items-center justify-between text-[11px] font-num text-slate-400 border-t border-slate-800/70 pt-2">
+                <span>نشطة: <strong className="text-slate-200">{p.openCount}</strong></span>
+                <span className={p.floatingPnl >= 0 ? 'text-emerald-400 font-bold' : 'text-red-400 font-bold'}>
+                  {p.floatingPnl >= 0 ? '+' : ''}${p.floatingPnl.toFixed(2)}
+                </span>
+              </div>
+            </button>
+          );
+        })}
+      </div>
+
+      {/* Portfolio Filter Bar */}
+      <div className="flex items-center gap-2 overflow-x-auto pb-1">
+        <button
+          onClick={() => setSelectedPid('ALL')}
+          className={`px-3 py-1.5 rounded-xl text-xs font-bold transition ${
+            selectedPid === 'ALL'
+              ? 'bg-emerald-500 text-black shadow-md shadow-emerald-500/20'
+              : 'bg-slate-900 border border-slate-800 text-slate-400 hover:text-white'
+          }`}
+        >
+          كافة المحافظ (الكل)
+        </button>
+        <button
+          onClick={() => setSelectedPid('PORTFOLIO_A')}
+          className={`px-3 py-1.5 rounded-xl text-xs font-bold transition ${
+            selectedPid === 'PORTFOLIO_A'
+              ? 'bg-rose-500 text-white shadow-md'
+              : 'bg-slate-900 border border-slate-800 text-slate-400 hover:text-white'
+          }`}
+        >
+          محفظة A (100x)
+        </button>
+        <button
+          onClick={() => setSelectedPid('PORTFOLIO_B')}
+          className={`px-3 py-1.5 rounded-xl text-xs font-bold transition ${
+            selectedPid === 'PORTFOLIO_B'
+              ? 'bg-amber-500 text-black shadow-md'
+              : 'bg-slate-900 border border-slate-800 text-slate-400 hover:text-white'
+          }`}
+        >
+          محفظة B (50x)
+        </button>
+        <button
+          onClick={() => setSelectedPid('PORTFOLIO_C')}
+          className={`px-3 py-1.5 rounded-xl text-xs font-bold transition ${
+            selectedPid === 'PORTFOLIO_C'
+              ? 'bg-emerald-500 text-black shadow-md'
+              : 'bg-slate-900 border border-slate-800 text-slate-400 hover:text-white'
+          }`}
+        >
+          محفظة C (25x)
+        </button>
+      </div>
+
+      {/* 3. Open Trades List with Progress Bar & Smart Sorting */}
+      {openTrades.length === 0 ? (
+        <div className="bg-[#121824] border border-slate-800/80 rounded-2xl p-12 text-center shadow-lg">
+          <div className="w-16 h-16 rounded-full bg-slate-900 border border-slate-800 mx-auto flex items-center justify-center text-slate-500 mb-4 animate-pulse">
+            <Zap className="w-8 h-8 text-emerald-400" />
+          </div>
+          <h3 className="text-base font-bold text-white mb-2">لا توجد صفقات مفتوحة حالياً</h3>
+          <p className="text-xs text-slate-400 max-w-md mx-auto leading-relaxed mb-4">
+            الماسح التلقائي يراقب السوق المباشر لحظة بلحظة. يتم فتح الصفقات المؤكدة تلقائياً فقط عند تحقق شروط الجودة الصارمة (تقييم 60+ وسعر دخول دقيق بنسبة فرق ≤ 0.5%).
+          </p>
+          <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-xl bg-slate-900 border border-slate-800 text-xs text-emerald-400 font-bold">
+            <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping" />
+            <span>المسح المستمر يعمل في الخلفية عبر كافة العقود</span>
+          </div>
+        </div>
+      ) : (
+        <div className="flex flex-col gap-3">
+          {openTrades.map((trade, idx) => {
+            const isLong = trade.side === 'LONG';
+            const livePrice = tickers[trade.symbol]?.lastPrice || trade.currentPrice || trade.actualEntryPrice;
+            const entryPrice = trade.actualEntryPrice || trade.entryPrice;
+            const tp1Price = trade.tp1;
+            const slPrice = trade.stopLoss;
+            const pnl = trade.netPnl || 0;
+            const isProfitable = pnl >= 0;
+
+            // Calculate progress towards TP1
+            let tp1Progress = 0;
+            if (isLong && tp1Price > entryPrice) {
+              tp1Progress = ((livePrice - entryPrice) / (tp1Price - entryPrice)) * 100;
+            } else if (!isLong && tp1Price < entryPrice) {
+              tp1Progress = ((entryPrice - livePrice) / (entryPrice - tp1Price)) * 100;
+            }
+
+            // Clamped progress percentage for visual bar (0% - 100%)
+            const barWidth = Math.max(0, Math.min(100, Math.round(tp1Progress)));
+            const portfolioName = trade.portfolioId ? PORTFOLIO_CONFIGS[trade.portfolioId]?.shortName : 'A (100x)';
+
+            return (
+              <div
+                key={trade.id}
+                className="bg-[#121824] border border-slate-800 rounded-2xl p-4 shadow-lg hover:border-slate-700 transition"
+              >
+                {/* Top Row: Symbol, Side, Portfolio badge, Ranking indicator */}
+                <div className="flex items-center justify-between mb-3">
+                  <div className="flex items-center gap-2.5">
+                    <button
+                      onClick={() => handleOpenChart(trade.symbol)}
+                      className="flex items-center gap-2 hover:opacity-80 transition text-right"
+                    >
+                      <CoinIcon symbol={trade.symbol} size="md" />
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <span className="text-sm font-black text-white font-num tracking-wide">
+                            {trade.symbol.replace('USDT', '')}
+                          </span>
+                          <span className="text-[10px] text-slate-500 font-num">/USDT</span>
+                          <span
+                            className={`px-2 py-0.5 rounded text-[10px] font-black ${
+                              isLong
+                                ? 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/30'
+                                : 'bg-red-500/15 text-red-400 border border-red-500/30'
+                            }`}
+                          >
+                            {isLong ? 'LONG شراء' : 'SHORT بيع'}
+                          </span>
+                          <span className="text-[10px] px-2 py-0.5 rounded bg-slate-800/80 text-slate-300 border border-slate-700/60 font-num">
+                            {portfolioName}
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-2 text-[10px] text-slate-400 mt-0.5 font-medium">
+                          <span>{getPatternEmoji(trade.pattern)} {trade.patternNameArabic || trade.pattern}</span>
+                          <span>•</span>
+                          <span>{trade.timeframe}</span>
+                          <span>•</span>
+                          <span className="text-slate-500 font-num">
+                            {new Date(trade.openedAt || trade.createdAt).toLocaleTimeString('ar-SA', { hour: '2-digit', minute: '2-digit' })}
+                          </span>
+                        </div>
+                      </div>
+                    </button>
+                  </div>
+
+                  {/* PnL Display */}
+                  <div className="text-left font-num">
+                    <div className={`text-base font-black ${isProfitable ? 'text-emerald-400' : 'text-red-400'}`}>
+                      {isProfitable ? '+' : ''}${pnl.toFixed(2)}
+                    </div>
+                    <div className={`text-[11px] font-bold ${isProfitable ? 'text-emerald-400' : 'text-red-400'}`}>
+                      {trade.pnlPercent >= 0 ? '+' : ''}{trade.pnlPercent.toFixed(2)}%
+                    </div>
+                  </div>
+                </div>
+
+                {/* Requirement 1: "سعر الإشارة: X | سعر الدخول الفعلي: Y" */}
+                <div className="bg-slate-900/90 rounded-xl p-2.5 border border-slate-800/90 mb-3 flex flex-wrap items-center justify-between gap-2 text-xs font-num">
+                  <div className="flex items-center gap-2">
+                    <span className="text-slate-400 text-[11px]">سعر الإشارة:</span>
+                    <span className="text-slate-200 font-bold">${formatPrice(trade.signalPrice || trade.entryPrice)}</span>
+                  </div>
+                  <span className="text-slate-700">|</span>
+                  <div className="flex items-center gap-2">
+                    <span className="text-slate-400 text-[11px]">سعر الدخول الفعلي:</span>
+                    <span className="text-emerald-400 font-bold">${formatPrice(trade.actualEntryPrice || trade.entryPrice)}</span>
+                  </div>
+                  <span className="text-slate-700">|</span>
+                  <div className="flex items-center gap-2">
+                    <span className="text-slate-400 text-[11px]">السعر الحالي:</span>
+                    <span className="text-white font-bold">${formatPrice(livePrice)}</span>
+                  </div>
+                </div>
+
+                {/* Requirement 2: "شريط تقدم" (Progress Bar) نحو الهدف الأول (TP1) */}
+                <div className="mb-3 bg-slate-900/80 rounded-xl p-3 border border-slate-800">
+                  <div className="flex items-center justify-between text-xs mb-1.5 font-num">
+                    <div className="flex items-center gap-1.5">
+                      <Target className="w-3.5 h-3.5 text-emerald-400" />
+                      <span className="text-slate-300 font-bold">نسبة الاقتراب من الهدف الأول (TP1)</span>
+                    </div>
+                    <span className={`font-black ${tp1Progress >= 0 ? 'text-emerald-400' : 'text-amber-400'}`}>
+                      {tp1Progress >= 0 ? `+${tp1Progress.toFixed(1)}%` : `${tp1Progress.toFixed(1)}%`}
+                    </span>
+                  </div>
+
+                  {/* Progress Bar Container */}
+                  <div className="w-full h-2.5 bg-slate-800 rounded-full overflow-hidden p-0.5">
+                    <div
+                      className={`h-full rounded-full transition-all duration-500 ${
+                        tp1Progress >= 100
+                          ? 'bg-gradient-to-r from-emerald-500 to-teal-400 animate-pulse'
+                          : tp1Progress > 0
+                          ? 'bg-gradient-to-r from-sky-500 to-emerald-400'
+                          : 'bg-slate-700'
+                      }`}
+                      style={{ width: `${barWidth}%` }}
+                    />
+                  </div>
+
+                  <div className="flex items-center justify-between text-[10px] text-slate-400 mt-1.5 font-num">
+                    <span>الدخول: ${formatPrice(entryPrice)}</span>
+                    <span className="text-emerald-400 font-bold">الهدف 1: ${formatPrice(tp1Price)}</span>
+                  </div>
+                </div>
+
+                {/* Targets & SL info */}
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-[11px] font-num bg-slate-900/40 rounded-xl p-2.5 border border-slate-800/60 mb-3">
+                  <div>
+                    <span className="text-slate-500 block text-[10px]">وقف الخسارة (SL)</span>
+                    <span className="text-red-400 font-bold">${formatPrice(slPrice)}</span>
+                  </div>
+                  <div>
+                    <span className="text-slate-500 block text-[10px]">الهدف 1 (TP1)</span>
+                    <span className="text-emerald-400 font-bold">${formatPrice(trade.tp1)}</span>
+                  </div>
+                  <div>
+                    <span className="text-slate-500 block text-[10px]">الهدف 2 (TP2)</span>
+                    <span className="text-emerald-400 font-bold">${formatPrice(trade.tp2)}</span>
+                  </div>
+                  <div>
+                    <span className="text-slate-500 block text-[10px]">سعر التصفية المقدر</span>
+                    <span className="text-amber-400 font-bold">
+                      {trade.liquidationPrice > 0 ? `$${formatPrice(trade.liquidationPrice)}` : 'آمن جداً'}
+                    </span>
+                  </div>
+                </div>
+
+                {/* Requirement 4: "SL محسوب من: ATR × 1.5" */}
+                <div className="flex flex-wrap items-center justify-between gap-2 text-[10px] text-slate-400 border-t border-slate-800/70 pt-2.5">
+                  <div className="flex items-center gap-1.5">
+                    <Shield className="w-3.5 h-3.5 text-sky-400" />
+                    <span className="text-sky-300 font-medium">
+                      {trade.slCalculationReason || 'SL محسوب من: ATR × 1.5'}
+                    </span>
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => handleManualClose(trade)}
+                      disabled={closingId === trade.id}
+                      className="px-3 py-1 rounded-lg bg-red-500/10 hover:bg-red-500/25 border border-red-500/30 text-red-400 text-[11px] font-bold transition flex items-center gap-1 active:scale-95 disabled:opacity-50"
+                    >
+                      <XCircle className="w-3 h-3" />
+                      <span>{closingId === trade.id ? 'جارٍ الإغلاق...' : 'إغلاق فوري'}</span>
+                    </button>
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+};
