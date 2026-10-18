@@ -527,6 +527,9 @@ export const TradingViewChart: React.FC<TradingViewChartProps> = ({
         });
       }
 
+      // Single source of truth: synchronize live candle close with store tickers and active trade calculations
+      useCryptoStore.getState().updateMarkPrices({ [symbol]: candle.close });
+
       lastUpdateTimeRef.current = Date.now();
     };
 

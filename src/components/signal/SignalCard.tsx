@@ -1,4 +1,5 @@
 import React from 'react';
+import { useCryptoStore } from '../../store/useCryptoStore';
 import { MultiTimeframeAnalysis, Timeframe, SetupPattern, TradeExecutionStatus } from '../../types/crypto';
 import {
   TrendingUp,
@@ -153,6 +154,7 @@ export const SignalCard: React.FC<SignalCardProps> = ({
   const patternInfo = getPatternBadge(setupPattern);
   const executionInfo = getExecutionBadge(executionStatus);
   const displayTfs: Timeframe[] = ['15m', '1h', '4h', '1d', '3d', '1w'];
+  const livePrice = useCryptoStore((s) => s.tickers[analysis.symbol]?.lastPrice) || currentPrice;
 
   // Bitcoin Relationship category
   const btcRel = analysis.btcCorrelation;
@@ -233,7 +235,7 @@ export const SignalCard: React.FC<SignalCardProps> = ({
 
           <div className="text-left shrink-0 font-num">
             <span className="text-[10px] text-slate-400 block">السعر الحالي</span>
-            <span className="text-xs font-bold text-white">${formatPrice(currentPrice)}</span>
+            <span className="text-xs font-bold text-white">${formatPrice(livePrice)}</span>
           </div>
         </div>
 

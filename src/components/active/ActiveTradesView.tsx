@@ -78,7 +78,7 @@ export const ActiveTradesView: React.FC = () => {
       if (b.side === 'LONG' && tp1B > entryB) {
         progressB = ((curB - entryB) / (tp1B - entryB)) * 100;
       } else if (b.side === 'SHORT' && tp1B < entryB) {
-        progressB = ((entryA - curB) / (entryB - tp1B)) * 100;
+        progressB = ((entryB - curB) / (entryB - tp1B)) * 100;
       }
 
       // Combined ranking score: weight PnL and closeness to TP1

@@ -68,9 +68,15 @@ export const RecommendationsView: React.FC = () => {
         }
       }
 
-      // 6. Rule: Remove if market conditions changed (Regime mismatch)
+      // 6. Rule: Remove if R:R < 1.5
+      if ((s.targets?.riskRewardRatio || 0) < 1.5) {
+        return false;
+      }
+
+      // 7. Rule: Remove if market conditions changed (Regime mismatch)
       if (marketRegime) {
         if (marketRegime.regime === 'VOLATILE') return false;
+        if (marketRegime.regime === 'RANGING' && s.setupPattern === 'BREAKOUT') return false;
         if (marketRegime.allowedTradeSides === 'LONG_ONLY' && s.overallDirection !== 'BULLISH') return false;
         if (marketRegime.allowedTradeSides === 'SHORT_ONLY' && s.overallDirection !== 'BEARISH') return false;
       }

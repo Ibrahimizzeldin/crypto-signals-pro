@@ -13,6 +13,7 @@ import {
   MarketRegimeInfo,
   PortfolioId,
   PortfolioState,
+  ClosedTradeRecord,
 } from '../types/crypto';
 import {
   PORTFOLIO_CONFIGS,
@@ -97,6 +98,7 @@ interface CryptoState {
   paperAccount: PaperAccount;
   paperTrades: PaperTrade[];
   equityHistory: EquityPoint[];
+  closedTradesHistory: ClosedTradeRecord[];
 
   // Actions
   setWsConnected: (connected: boolean) => void;
@@ -112,6 +114,7 @@ interface CryptoState {
   // Paper Trading Actions
   setAutoTradingEnabled: (enabled: boolean) => void;
   addPaperTrade: (trade: PaperTrade, targetPortfolio?: PortfolioId) => void;
+  openTradeManually: (symbol: string) => boolean;
   closePaperTradeManually: (id: string, exitPrice?: number) => void;
   resetPortfolio: (portfolioId?: PortfolioId) => void;
   resetPaperAccount: () => void;
@@ -191,6 +194,7 @@ export const useCryptoStore = create<CryptoState>()(
       paperAccount: initialPortfolios.PORTFOLIO_A.account,
       paperTrades: [],
       equityHistory: [],
+      closedTradesHistory: [],
 
       setWsConnected: (connected) => set({ wsConnected: connected }),
 
@@ -318,10 +322,186 @@ export const useCryptoStore = create<CryptoState>()(
           };
         }),
 
+      openTradeManually: (symbol: string) => {
+        const { portfolios, tickers, signalCache, soundEnabled } = get();
+        const cachedAnalysis = signalCache[symbol];
+        const livePrice = tickers[symbol]?.lastPrice || (cachedAnalysis?.currentPrice) || 100;
+        const side = cachedAnalysis ? (cachedAnalysis.overallDirection === 'BULLISH' ? 'LONG' : 'SHORT') : 'LONG';
+        const isLong = side === 'LONG';
+
+        const precision = livePrice > 0 ? (livePrice < 1 ? 4 : livePrice < 10 ? 3 : 2) : 2;
+        const roundDec = (val: number) => Number(val.toFixed(precision));
+
+        // Enforce ATR & R:R >= 1.5 floor
+        const estAtr = cachedAnalysis?.supportResistance?.nearestSupport
+          ? Math.abs(livePrice - cachedAnalysis.supportResistance.nearestSupport)
+          : livePrice * 0.015;
+        const minSlDist = Math.max(livePrice * 0.012, estAtr * 1.5);
+        const slPrice = isLong ? roundDec(livePrice - minSlDist) : roundDec(livePrice + minSlDist);
+        const tp1Price = isLong ? roundDec(livePrice + minSlDist * 1.6) : roundDec(livePrice - minSlDist * 1.6);
+        const tp2Price = isLong ? roundDec(livePrice + minSlDist * 2.5) : roundDec(livePrice - minSlDist * 2.5);
+        const tp3Price = isLong ? roundDec(livePrice + minSlDist * 3.5) : roundDec(livePrice - minSlDist * 3.5);
+
+        const pattern = cachedAnalysis?.setupPattern || 'BREAKOUT';
+        const patternNameArabic = cachedAnalysis?.patternNameArabic || 'Breakout (اختراق هيكلي)';
+
+        const analysis: MultiTimeframeAnalysis = cachedAnalysis || {
+          symbol,
+          overallSignal: 'STRONG_BUY',
+          overallDirection: 'BULLISH',
+          confidence: 85,
+          agreedTimeframesCount: 5,
+          totalTimeframesCount: 6,
+          timeframeResults: [],
+          setupPattern: pattern,
+          patternNameArabic,
+          executionStatus: 'READY_NOW',
+          executionStatusArabic: 'جاهزة للتنفيذ الآن',
+          recommendation: 'ادخل الآن',
+          conditionsMet: ['دخول يدوي مباشر بطلب المستخدم'],
+          warnings: [],
+          scoreBreakdown: {
+            totalScore: 85,
+            timeframeAlignment: 20,
+            emaTrendStrength: 15,
+            riskReward: 10,
+            volume: 10,
+            marketRegimeMatch: 15,
+            rsiQuality: 8,
+            macdConfirmation: 7,
+            supportResistanceClear: 5,
+            executionCategory: 'INSTANT',
+            executionCategoryArabic: 'تنفيذ فوري ⚡',
+          },
+          targets: {
+            entry: livePrice,
+            tp1: tp1Price,
+            tp2: tp2Price,
+            tp3: tp3Price,
+            sl: slPrice,
+            tp1Percent: Number((((tp1Price - livePrice) / livePrice) * 100).toFixed(2)),
+            tp2Percent: Number((((tp2Price - livePrice) / livePrice) * 100).toFixed(2)),
+            tp3Percent: Number((((tp3Price - livePrice) / livePrice) * 100).toFixed(2)),
+            slPercent: Number((((slPrice - livePrice) / livePrice) * 100).toFixed(2)),
+            riskRewardRatio: 1.6,
+            entryDistancePercent: 0,
+            tp1AtrDistance: 2.4,
+            tp2AtrDistance: 3.8,
+            slAtrDistance: 1.5,
+            slCalculationReason: 'SL محسوب من: ATR × 1.5 (يدوي)',
+          },
+          currentPrice: livePrice,
+          explanation: 'صفقة مفتوحة يدوياً لتجاوز فلاتر البوت وبدء التداول الفوري',
+          bullishScenario: '',
+          bearishScenario: '',
+          volatilityStatus: 'طبيعي',
+          momentumStatus: 'قوي',
+          supportResistance: { supports: [], resistances: [], nearestSupport: 0, nearestResistance: 0 },
+          timestamp: Date.now(),
+        };
+
+        const pIds: PortfolioId[] = ['PORTFOLIO_A', 'PORTFOLIO_B', 'PORTFOLIO_C'];
+        const updatedPortfolios = { ...portfolios };
+        let openedCount = 0;
+
+        pIds.forEach((pid) => {
+          const p = portfolios[pid];
+          const cfg = PORTFOLIO_CONFIGS[pid];
+
+          const openTrades = p.trades.filter((t) => t.status === 'OPEN');
+          const marginUsed = openTrades.reduce((acc, t) => acc + t.margin, 0);
+          const availableBalance = Math.max(0, p.account.balance - marginUsed);
+          if (availableBalance < cfg.marginPerTrade) return;
+
+          const alreadyOpen = openTrades.some((t) => t.symbol === symbol);
+          if (alreadyOpen) return;
+
+          const newTrade = createPaperTradeForPortfolio(analysis, pid, '15m', livePrice);
+          newTrade.status = 'OPEN';
+          newTrade.actualEntryPrice = livePrice;
+          newTrade.entryPrice = livePrice;
+          newTrade.openedAt = Date.now();
+          newTrade.closeReason = undefined;
+          newTrade.remainingSizeRatio = 1.0;
+          newTrade.stopLoss = slPrice;
+          newTrade.originalStopLoss = slPrice;
+          newTrade.tp1 = tp1Price;
+          newTrade.tp2 = tp2Price;
+          newTrade.tp3 = tp3Price;
+          newTrade.pattern = pattern;
+          newTrade.patternNameArabic = patternNameArabic;
+
+          openedCount++;
+          const newBalance = Math.max(0, Number((p.account.balance - 0.40).toFixed(2)));
+          let newTrades = [newTrade, ...p.trades.filter((t) => !(t.symbol === symbol && t.status === 'PENDING'))];
+          const activeOpen = newTrades.filter((t) => t.status === 'OPEN');
+          const newMarginUsed = activeOpen.reduce((acc, t) => acc + t.margin, 0);
+          const totalUnrealized = activeOpen.reduce((acc, t) => acc + (t.netPnl || 0), 0);
+          const currentEquity = Math.max(0, Number((newBalance + totalUnrealized).toFixed(2)));
+          const totalExposure = activeOpen.length * 1000;
+
+          newTrades = newTrades.map((t) => {
+            if (t.status === 'OPEN') {
+              const crossLiq = computeCrossLiquidation(
+                t.actualEntryPrice,
+                t.side,
+                currentEquity,
+                activeOpen.length,
+                t.positionSize
+              );
+              return {
+                ...t,
+                liquidationPrice: crossLiq.liquidationPrice,
+                liquidationDistancePercent: crossLiq.liquidationDistancePercent,
+                totalExposure,
+              };
+            }
+            return t;
+          });
+
+          const marginRatioPercent = newBalance > 0 ? (newMarginUsed / newBalance) * 100 : 0;
+          const newAccount: PaperAccount = {
+            ...p.account,
+            balance: newBalance,
+            equity: currentEquity,
+            marginUsed: Number(newMarginUsed.toFixed(2)),
+            marginRatioPercent: Number(marginRatioPercent.toFixed(1)),
+            totalTradesCount: p.account.totalTradesCount + 1,
+            openPositionsCount: activeOpen.length,
+            pendingPositionsCount: newTrades.filter((t) => t.status === 'PENDING').length,
+          };
+
+          updatedPortfolios[pid] = {
+            ...p,
+            account: newAccount,
+            trades: newTrades,
+          };
+        });
+
+        if (openedCount > 0) {
+          const activePid = getActivePid(get().activePortfolioId);
+          set({
+            portfolios: updatedPortfolios,
+            paperTrades: updatedPortfolios[activePid].trades,
+            paperAccount: updatedPortfolios[activePid].account,
+            equityHistory: updatedPortfolios[activePid].equityHistory,
+          });
+
+          sendTradingNotification(
+            `تم فتح صفقة ${symbol} يدوياً بنجاح ⚡`,
+            `سعر الدخول المباشر: $${formatPrice(livePrice)} • أصبحت ظاهرة فوراً في صفحة "نشطة".`,
+            soundEnabled
+          );
+          return true;
+        }
+        return false;
+      },
+
       closePaperTradeManually: (id, exitPrice) => {
-        const { portfolios, soundEnabled } = get();
+        const { portfolios, soundEnabled, closedTradesHistory } = get();
         let changed = false;
         const updatedPortfolios = { ...portfolios };
+        const newClosedRecords: ClosedTradeRecord[] = [];
 
         (Object.keys(portfolios) as PortfolioId[]).forEach((pid) => {
           const p = portfolios[pid];
@@ -363,6 +543,31 @@ export const useCryptoStore = create<CryptoState>()(
 
           // Realize net PnL into cash wallet balance
           const newBalance = Math.max(0, Number((p.account.balance + net).toFixed(3)));
+
+          // Record in closedTradesHistory directly
+          const closedRecord: ClosedTradeRecord = {
+            id: trade.id,
+            portfolioId: pid,
+            symbol: trade.symbol,
+            side: trade.side,
+            pattern: trade.pattern,
+            patternNameArabic: trade.patternNameArabic || trade.pattern,
+            timeframe: trade.timeframe,
+            entryPrice: trade.actualEntryPrice,
+            exitPrice: effectiveExit,
+            netPnl: net,
+            pnlPercent: pnlPct,
+            result: net > 0 ? 'win' : net < 0 ? 'loss' : 'breakeven',
+            closeReason: 'MANUAL',
+            rMultiple: trade.rMultiple || 1.0,
+            margin: trade.margin,
+            leverage: trade.leverage,
+            openedAt: trade.openedAt || trade.createdAt,
+            closedAt: Date.now(),
+            score: trade.score,
+            notes: trade.notes,
+          };
+          newClosedRecords.push(closedRecord);
 
           // Rebalance remaining OPEN trades across the portfolio in Cross Margin
           let newTrades = [...p.trades];
@@ -416,6 +621,7 @@ export const useCryptoStore = create<CryptoState>()(
             paperTrades: updatedPortfolios[activePid].trades,
             paperAccount: updatedPortfolios[activePid].account,
             equityHistory: updatedPortfolios[activePid].equityHistory,
+            closedTradesHistory: [...newClosedRecords, ...closedTradesHistory],
           });
         }
       },
@@ -636,9 +842,10 @@ export const useCryptoStore = create<CryptoState>()(
        * Each portfolio is independent: If A is liquidated at 1%, B (2%) and C (4%) continue!
        */
       processPaperTradesTick: (priceMap) => {
-        const { portfolios, soundEnabled } = get();
+        const { portfolios, soundEnabled, closedTradesHistory } = get();
         let anyChanged = false;
         const updatedPortfolios = { ...portfolios };
+        const newClosedHistoryRecords: ClosedTradeRecord[] = [];
 
         (Object.keys(portfolios) as PortfolioId[]).forEach((pid) => {
           const p = portfolios[pid];
@@ -655,7 +862,40 @@ export const useCryptoStore = create<CryptoState>()(
             if (!livePrice || t.status === 'CLOSED' || t.status === 'EXPIRED') return t;
 
             const prevStatus = t.status;
-            const { updatedTrade, closed } = processPaperTradeUpdate(t, livePrice, soundEnabled);
+            const { updatedTrade, closed, partialClosed, partialStage, partialPnL, releasedMargin } = processPaperTradeUpdate(t, livePrice, soundEnabled);
+
+            if (partialClosed && partialPnL) {
+              portChanged = true;
+              realizedPnLDelta += partialPnL;
+
+              // Record partial close directly in closedTradesHistory with reason TP1 / TP2
+              const stage = partialStage || 'TP1';
+              const partialRec: ClosedTradeRecord = {
+                id: `${updatedTrade.id}-${stage.toLowerCase()}-${Date.now()}`,
+                portfolioId: pid,
+                symbol: updatedTrade.symbol,
+                side: updatedTrade.side,
+                pattern: updatedTrade.pattern,
+                patternNameArabic: updatedTrade.patternNameArabic || updatedTrade.pattern,
+                timeframe: updatedTrade.timeframe,
+                entryPrice: updatedTrade.actualEntryPrice,
+                exitPrice: stage === 'TP1' ? updatedTrade.tp1 : updatedTrade.tp2,
+                netPnl: partialPnL,
+                pnlPercent: Number(((partialPnL / (releasedMargin || updatedTrade.margin || 1)) * 100).toFixed(2)),
+                result: 'win',
+                closeReason: stage,
+                rMultiple: stage === 'TP1' ? 1.0 : 1.5,
+                margin: releasedMargin || (updatedTrade.margin * 0.5),
+                leverage: updatedTrade.leverage,
+                openedAt: updatedTrade.openedAt || updatedTrade.createdAt,
+                closedAt: Date.now(),
+                score: updatedTrade.score,
+                notes: stage === 'TP1'
+                  ? `إغلاق جزئي 50% عند الهدف الأول TP1 ($${formatPrice(updatedTrade.tp1)}) ونقل الوقف إلى سعر الدخول`
+                  : `إغلاق جزئي 30% إضافي عند الهدف الثاني TP2 ($${formatPrice(updatedTrade.tp2)}) ونقل الوقف إلى TP1`,
+              };
+              newClosedHistoryRecords.push(partialRec);
+            }
 
             if (prevStatus === 'PENDING' && updatedTrade.status === 'OPEN') {
               portChanged = true;
@@ -668,10 +908,37 @@ export const useCryptoStore = create<CryptoState>()(
 
               if (updatedTrade.closeReason === 'LIQUIDATED') {
                 newlyLiquidatedCount++;
-                realizedPnLDelta -= updatedTrade.margin;
+                realizedPnLDelta -= (updatedTrade.originalMargin || updatedTrade.margin);
+              } else if (updatedTrade.closeReason === 'TP3') {
+                realizedPnLDelta += (partialPnL || 0);
               } else {
                 realizedPnLDelta += updatedTrade.netPnl;
               }
+
+              // Push to direct closed trades history
+              const historyRec: ClosedTradeRecord = {
+                id: updatedTrade.id,
+                portfolioId: pid,
+                symbol: updatedTrade.symbol,
+                side: updatedTrade.side,
+                pattern: updatedTrade.pattern,
+                patternNameArabic: updatedTrade.patternNameArabic || updatedTrade.pattern,
+                timeframe: updatedTrade.timeframe,
+                entryPrice: updatedTrade.actualEntryPrice,
+                exitPrice: updatedTrade.exitPrice || livePrice,
+                netPnl: updatedTrade.netPnl,
+                pnlPercent: updatedTrade.pnlPercent,
+                result: updatedTrade.netPnl > 0 ? 'win' : updatedTrade.netPnl < 0 ? 'loss' : 'breakeven',
+                closeReason: updatedTrade.closeReason || (updatedTrade.netPnl < 0 ? 'SL' : 'TP3'),
+                rMultiple: updatedTrade.rMultiple || 1.0,
+                margin: updatedTrade.originalMargin || updatedTrade.margin,
+                leverage: updatedTrade.leverage,
+                openedAt: updatedTrade.openedAt || updatedTrade.createdAt,
+                closedAt: updatedTrade.closedAt || Date.now(),
+                score: updatedTrade.score,
+                notes: updatedTrade.notes || (updatedTrade.closeReason === 'TP3' ? 'إغلاق كامل عند TP3' : undefined),
+              };
+              newClosedHistoryRecords.push(historyRec);
 
               if (updatedTrade.netPnl < 0) {
                 consecutiveLosses++;
@@ -715,6 +982,30 @@ export const useCryptoStore = create<CryptoState>()(
               newBalance = 0;
               updatedTrades = updatedTrades.map((t) => {
                 if (t.status === 'OPEN') {
+                  const liqRec: ClosedTradeRecord = {
+                    id: t.id,
+                    portfolioId: pid,
+                    symbol: t.symbol,
+                    side: t.side,
+                    pattern: t.pattern,
+                    patternNameArabic: t.patternNameArabic || t.pattern,
+                    timeframe: t.timeframe,
+                    entryPrice: t.actualEntryPrice,
+                    exitPrice: t.currentPrice || t.actualEntryPrice,
+                    netPnl: -t.margin,
+                    pnlPercent: -100,
+                    result: 'loss',
+                    closeReason: 'LIQUIDATED',
+                    rMultiple: -1.0,
+                    margin: t.margin,
+                    leverage: t.leverage,
+                    openedAt: t.openedAt || t.createdAt,
+                    closedAt: Date.now(),
+                    score: t.score,
+                    notes: 'تصفية Cross كاملة (وصول رأس المال Equity إلى الصفر)',
+                  };
+                  newClosedHistoryRecords.push(liqRec);
+
                   return {
                     ...t,
                     status: 'CLOSED' as const,
@@ -802,7 +1093,24 @@ export const useCryptoStore = create<CryptoState>()(
             paperTrades: updatedPortfolios[activePid].trades,
             paperAccount: updatedPortfolios[activePid].account,
             equityHistory: updatedPortfolios[activePid].equityHistory,
+            closedTradesHistory:
+              newClosedHistoryRecords.length > 0
+                ? [...newClosedHistoryRecords, ...closedTradesHistory]
+                : closedTradesHistory,
           });
+
+          // Capacity liberated: auto-execute top qualifying signals in cache into newly freed margin
+          if (newClosedHistoryRecords.length > 0) {
+            setTimeout(() => {
+              const cachedSignals = Object.values(get().signalCache);
+              for (const sig of cachedSignals) {
+                const sc = sig.scoreBreakdown?.totalScore ?? sig.confidence;
+                if (sc >= 70 && (sig.targets?.riskRewardRatio || 0) >= 1.5) {
+                  get().evaluateAndExecuteSignal(sig, '15m');
+                }
+              }
+            }, 50);
+          }
         }
       },
 
@@ -1038,6 +1346,7 @@ export const useCryptoStore = create<CryptoState>()(
           paperAccount: freshPortfolios.PORTFOLIO_A.account,
           paperTrades: [],
           equityHistory: [],
+          closedTradesHistory: [],
         });
       },
     }),
@@ -1054,6 +1363,7 @@ export const useCryptoStore = create<CryptoState>()(
         portfolios: state.portfolios,
         activePortfolioId: state.activePortfolioId,
         maxConcurrentTradesPerPortfolio: state.maxConcurrentTradesPerPortfolio,
+        closedTradesHistory: state.closedTradesHistory,
       }),
     }
   )

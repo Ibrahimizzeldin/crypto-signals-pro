@@ -200,10 +200,14 @@ class AutoScannerEngine {
           // Polite delay between API calls
           await new Promise((r) => setTimeout(r, 300));
         } else {
-          // Re-evaluate existing cache
+          // Re-evaluate existing cache and execute if capacity is available
           const sc = cached.analysis.scoreBreakdown?.totalScore ?? cached.analysis.confidence;
           if (sc >= 70) this.currentProgress.instantSignalsCount++;
           else if (sc >= 55) this.currentProgress.watchSignalsCount++;
+
+          if (sc >= 55 && (cached.analysis.targets?.riskRewardRatio || 0) >= 1.5) {
+            store.evaluateAndExecuteSignal(cached.analysis, '15m');
+          }
         }
       }
 

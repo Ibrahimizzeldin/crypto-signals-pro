@@ -366,18 +366,37 @@ export function buildMultiTimeframeAnalysis(
     if (sl <= entry) sl = roundDec(entry + Math.max(curAtr * 0.8, minTick * 10));
   }
 
+  // Mandatory rule: R:R ratio must always be >= 1.5
+  let targetRisk = Math.abs(entry - sl);
+  if (targetRisk <= 0) targetRisk = minSlDistance;
+
+  if (setupDirection === 'BULLISH') {
+    const minRequiredTp1 = roundDec(entry + targetRisk * 1.5);
+    if (tp1 < minRequiredTp1) {
+      tp1 = minRequiredTp1;
+      if (tp2 <= tp1) tp2 = roundDec(tp1 + Math.max(curAtr * 1.0, minTick * 10));
+      if (tp3 <= tp2) tp3 = roundDec(tp2 + Math.max(curAtr * 1.0, minTick * 10));
+    }
+  } else {
+    const minRequiredTp1 = roundDec(entry - targetRisk * 1.5);
+    if (tp1 > minRequiredTp1) {
+      tp1 = minRequiredTp1;
+      if (tp2 >= tp1) tp2 = roundDec(tp1 - Math.max(curAtr * 1.0, minTick * 10));
+      if (tp3 >= tp2) tp3 = roundDec(tp2 - Math.max(curAtr * 1.0, minTick * 10));
+    }
+  }
+
   const tp1Percent = Number((((tp1 - entry) / entry) * 100).toFixed(2));
   const tp2Percent = Number((((tp2 - entry) / entry) * 100).toFixed(2));
   const tp3Percent = Number((((tp3 - entry) / entry) * 100).toFixed(2));
   const slPercent = Number((((sl - entry) / entry) * 100).toFixed(2));
 
   const targetReward = Math.abs(tp1 - entry);
-  const targetRisk = Math.abs(entry - sl);
   const tp1AtrDist = Number((targetReward / curAtr).toFixed(1));
   const tp2AtrDist = Number((Math.abs(tp2 - entry) / curAtr).toFixed(1));
   const slAtrDist = Number((targetRisk / curAtr).toFixed(1));
-  const rawRR = targetRisk > 0 ? targetReward / targetRisk : 1.0;
-  const riskRewardRatio = Number(rawRR.toFixed(2));
+  const rawRR = targetRisk > 0 ? targetReward / targetRisk : 1.5;
+  const riskRewardRatio = Number(Math.max(1.5, rawRR).toFixed(2));
   const entryDistancePercent = Number((((entry - currentPrice) / currentPrice) * 100).toFixed(2));
 
   // Check for opposing giant candle

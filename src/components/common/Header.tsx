@@ -1,6 +1,5 @@
 import React from 'react';
 import { useCryptoStore } from '../../store/useCryptoStore';
-import { PWAInstallButton } from '../pwa/PWAInstallButton';
 import { Activity, Volume2, VolumeX, Wifi, WifiOff } from 'lucide-react';
 
 export const Header: React.FC = () => {
@@ -84,9 +83,6 @@ export const Header: React.FC = () => {
           >
             {soundEnabled ? <Volume2 className="w-3.5 h-3.5" /> : <VolumeX className="w-3.5 h-3.5" />}
           </button>
-
-          {/* In-App PWA Install Button */}
-          <PWAInstallButton />
         </div>
       </div>
     </header>

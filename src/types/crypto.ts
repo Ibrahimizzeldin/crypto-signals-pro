@@ -303,6 +303,7 @@ export interface PaperTrade {
   highestPriceSeen: number; // for Long trailing stop
   lowestPriceSeen: number;  // for Short trailing stop
   margin: number; // 10 USDT (A), 20 (B), 40 (C)
+  originalMargin?: number;
   leverage: number; // 100x (A), 50x (B), 25x (C)
   positionSize: number; // 1000 USDT fixed
   remainingSizeRatio: number; // 1.0 -> 0.5 after TP1 -> 0.2 after TP2 -> 0 after TP3/SL
@@ -328,6 +329,29 @@ export interface PaperTrade {
   openedAt?: number;
   closedAt?: number;
   closeReason?: PaperCloseReason;
+  notes?: string;
+}
+
+export interface ClosedTradeRecord {
+  id: string;
+  portfolioId: PortfolioId;
+  symbol: string;
+  side: 'LONG' | 'SHORT';
+  pattern: SetupPattern;
+  patternNameArabic: string;
+  timeframe: Timeframe;
+  entryPrice: number;
+  exitPrice: number;
+  netPnl: number;
+  pnlPercent: number;
+  result: 'win' | 'loss' | 'breakeven';
+  closeReason: PaperCloseReason;
+  rMultiple: number;
+  margin: number;
+  leverage: number;
+  openedAt: number;
+  closedAt: number;
+  score?: number;
   notes?: string;
 }
 

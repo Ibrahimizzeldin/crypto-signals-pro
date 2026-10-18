@@ -261,16 +261,37 @@ export function canOpenNewTrade(
     return { allowed: false, reason: 'التداول الافتراضي التلقائي معطل حالياً' };
   }
 
-  // 2. Check Cool-down after 3 consecutive losses
+  // 3. Check News pause (max 15 mins)
+  if (isNewsPaused) {
+    return { allowed: false, reason: 'تم تعليق الصفقات مؤقتاً بسبب أخبار عاجلة عالية التأثير (حتى 15 دقيقة)' };
+  }
+
+  // 4. Check Market Regime
+  if (marketRegime) {
+    if (marketRegime.regime === 'VOLATILE' || marketRegime.allowedTradeSides === 'HALTED') {
+      return { allowed: false, reason: 'توقف مؤقت للصفقات بسبب تقلب حاد في السوق (Volatile)' };
+    }
+    if (marketRegime.allowedTradeSides === 'LONG_ONLY' && side !== 'LONG') {
+      return { allowed: false, reason: 'حالة السوق صاعدة - يُسمح بصفقات Long فقط' };
+    }
+    if (marketRegime.allowedTradeSides === 'SHORT_ONLY' && side !== 'SHORT') {
+      return { allowed: false, reason: 'حالة السوق هابطة - يُسمح بصفقات Short فقط' };
+    }
+    if (marketRegime.regime === 'RANGING' && pattern === 'BREAKOUT') {
+      return { allowed: false, reason: 'حالة السوق: انتظار كسر النطاق - يُمنع نمط Breakout حتى تأكيد الكسر' };
+    }
+  }
+
+  // 5. Check Cool-down after 3 consecutive losses
   if (account.coolDownUntil > Date.now()) {
     const minsLeft = Math.ceil((account.coolDownUntil - Date.now()) / 60000);
     return { allowed: false, reason: `فترة تهدئة مؤقتة متبقية (${minsLeft} دقيقة) بسبب 3 خسائر متتالية` };
   }
 
-  // 3. الصفقات غير محدودة طالما يوجد رصيد حر (تم إلغاء الحد الأقصى 20/15/10 نهائياً)
+  // 6. الصفقات غير محدودة طالما يوجد رصيد حر (تم إلغاء الحد الأقصى 20/15/10 نهائياً)
   const openTrades = activeTrades.filter((t) => t.status === 'OPEN');
 
-  // 4. Coin uniqueness within THIS portfolio (no duplicate trade on the same symbol in same portfolio)
+  // 7. Coin uniqueness within THIS portfolio (no duplicate trade on the same symbol in same portfolio)
   const existingOnSymbol = activeTrades.some(
     (t) => (t.status === 'OPEN' || t.status === 'PENDING') && t.symbol === symbol
   );
@@ -316,15 +337,15 @@ export function createPaperTradeForPortfolio(
   const precision = livePrice > 0 ? (livePrice < 1 ? 4 : livePrice < 10 ? 3 : 2) : 2;
   const roundDec = (val: number) => Number(val.toFixed(precision));
 
-  // 2. Slippage / Price difference check:
-  // إذا كان الفرق بين سعر الإشارة والسعر الحقيقي > 0.5%:
-  // * لا تفتح الصفقة.
-  // * سجّلها كـ "Expired" (فاتت).
+  // 2. Execution determination:
+  // If it's INSTANT execution ('تنفيذ فوري' / READY_NOW / Total Score >= 70):
+  // Execute immediately at market live price without expiration!
   const priceDiffPercent = signalPrice > 0 ? Number(((Math.abs(livePrice - signalPrice) / signalPrice) * 100).toFixed(2)) : 0;
-  const hasExpired = priceDiffPercent > 0.5;
+  const isInstantExecution = isReadyNow || (analysis.scoreBreakdown?.totalScore ?? analysis.confidence) >= 70;
+  const hasExpired = !isInstantExecution && priceDiffPercent > 0.5;
 
   let actualEntryPrice = roundDec(livePrice);
-  const status: PaperTradeStatus = hasExpired ? 'EXPIRED' : (isReadyNow ? 'OPEN' : 'PENDING');
+  const status: PaperTradeStatus = hasExpired ? 'EXPIRED' : (isInstantExecution ? 'OPEN' : 'PENDING');
   const closeReason: PaperCloseReason | undefined = hasExpired ? 'EXPIRED' : undefined;
 
   // 3. If diff <= 0.5%:
@@ -401,6 +422,7 @@ export function createPaperTradeForPortfolio(
     highestPriceSeen: actualEntryPrice,
     lowestPriceSeen: actualEntryPrice,
     margin: allocatedMargin,
+    originalMargin: allocatedMargin,
     leverage: config.leverage,
     positionSize,
     remainingSizeRatio: hasExpired ? 0 : 1.0,
@@ -459,7 +481,15 @@ export function processPaperTradeUpdate(
   trade: PaperTrade,
   currentPrice: number,
   soundEnabled = true
-): { updatedTrade: PaperTrade; closed: boolean; notification?: { title: string; body: string } } {
+): {
+  updatedTrade: PaperTrade;
+  closed: boolean;
+  partialClosed?: boolean;
+  partialStage?: 'TP1' | 'TP2' | 'TP3';
+  partialPnL?: number;
+  releasedMargin?: number;
+  notification?: { title: string; body: string };
+} {
   // If trade is already CLOSED or EXPIRED, no-op
   if (trade.status === 'CLOSED' || trade.status === 'EXPIRED') {
     return { updatedTrade: trade, closed: false };
@@ -540,36 +570,89 @@ export function processPaperTradeUpdate(
       : updated.actualEntryPrice - currentPrice;
   updated.rMultiple = riskPerUnit > 0 ? Number((rewardPerUnit / riskPerUnit).toFixed(2)) : 1.0;
 
-  // 4. Check TP1 (Close 50% & Move SL to Breakeven)
+  // 3. Move Stop Loss to Break-even when 50% of distance towards TP1 is reached
+  if (!updated.slMovedToBreakeven && updated.actualEntryPrice > 0 && updated.tp1 > 0) {
+    const isLong = updated.side === 'LONG';
+    const totalDist = isLong ? updated.tp1 - updated.actualEntryPrice : updated.actualEntryPrice - updated.tp1;
+    const coveredDist = isLong ? currentPrice - updated.actualEntryPrice : updated.actualEntryPrice - currentPrice;
+    if (totalDist > 0 && coveredDist >= 0.5 * totalDist) {
+      updated.slMovedToBreakeven = true;
+      updated.stopLoss = updated.actualEntryPrice;
+      const notif = {
+        title: `تأمين الصفقة (Break-even) [${portfolioLabel}]: ${updated.symbol} 🛡️`,
+        body: `قطع السعر 50% من المسافة نحو TP1 - تم نقل الوقف تلقائياً إلى سعر الدخول ${formatPrice(updated.actualEntryPrice)}.`,
+      };
+      sendTradingNotification(notif.title, notif.body, soundEnabled);
+    }
+  }
+
+  // 4. Check TP1 (Actual 50% Partial Close, Move SL to Entry Break-even, & Liberate 50% Margin)
   const isTp1Reached =
     !updated.tp1Hit &&
     (updated.side === 'LONG' ? currentPrice >= updated.tp1 : currentPrice <= updated.tp1);
 
   if (isTp1Reached) {
     updated.tp1Hit = true;
+    const origMargin = updated.originalMargin || updated.margin;
     // Lock in profit for 50% of the position
     const closedSize = updated.positionSize * 0.5;
     const unitsClosed = closedSize / updated.actualEntryPrice;
-    const lockedPnl =
+    const lockedGrossPnl =
       updated.side === 'LONG'
         ? (updated.tp1 - updated.actualEntryPrice) * unitsClosed
         : (updated.actualEntryPrice - updated.tp1) * unitsClosed;
+    const comm = 0.20; // 50% commission
+    const lockedNetPnl = Number((lockedGrossPnl - comm).toFixed(2));
 
-    updated.grossPnl += lockedPnl;
-    updated.remainingSizeRatio -= 0.5; // Remaining: 0.5
-    updated.stopLoss = updated.actualEntryPrice; // Breakeven
+    updated.grossPnl += lockedGrossPnl;
+    updated.remainingSizeRatio = 0.5; // Remaining: 50%
+    const releasedMargin = Number((origMargin * 0.5).toFixed(2));
+    updated.margin = Number((origMargin * 0.5).toFixed(2)); // Remaining margin: 50%
+    updated.commissionPaid += comm;
+
+    // Rule: عند وصول السعر إلى TP1: أغلق 50% من حجم الصفقة فوراً، وحدّث الرصيد، وانقل وقف الخسارة إلى سعر الدخول.
+    updated.stopLoss = updated.actualEntryPrice;
     updated.slMovedToBreakeven = true;
-    updated.commissionPaid += 0.005; // 0.02% on 25 USDT
+    updated.slCalculationReason = 'نقل الوقف لسعر الدخول بعد TP1 (Break-even)';
+
+    // تفعيل Trailing SL لحماية الأرباح عند استمرار السعر بعد TP1
+    updated.trailingActive = true;
+    const atrDist = updated.trailingDistance > 0 ? updated.trailingDistance : Math.abs(updated.tp1 - updated.actualEntryPrice) * 0.5;
+    updated.trailingDistance = atrDist;
 
     const notif = {
       title: `${updated.symbol} حقق TP1! [${portfolioLabel}] 🎯`,
-      body: `تحقيق الهدف الأول عند ${formatPrice(updated.tp1)} - إغلاق 50% ونقل وقف الخسارة إلى الدخول (Breakeven).`,
+      body: `تحقيق الهدف الأول عند ${formatPrice(updated.tp1)} - إغلاق 50% فوراً (+${lockedNetPnl} USDT)، نقل الوقف للدخول، وتحرير $${releasedMargin} من الهامش.`,
     };
     sendTradingNotification(notif.title, notif.body, soundEnabled);
-    return { updatedTrade: updated, closed: false, notification: notif };
+    return {
+      updatedTrade: updated,
+      closed: false,
+      partialClosed: true,
+      partialStage: 'TP1',
+      partialPnL: lockedNetPnl,
+      releasedMargin,
+      notification: notif,
+    };
   }
 
-  // 5. Check TP2 (Close 30% & Activate Trailing Stop 1x ATR)
+  // 5. Update Trailing Stop after TP1 is hit (moves 1.0 x ATR behind peak price)
+  if (updated.trailingActive && updated.tp1Hit && !updated.tp2Hit) {
+    const atrDist = updated.trailingDistance > 0 ? updated.trailingDistance : Math.abs(updated.tp1 - updated.actualEntryPrice) * 0.5;
+    if (updated.side === 'LONG') {
+      const newSl = updated.highestPriceSeen - atrDist;
+      if (newSl > updated.stopLoss) {
+        updated.stopLoss = newSl;
+      }
+    } else {
+      const newSl = updated.lowestPriceSeen + atrDist;
+      if (newSl < updated.stopLoss) {
+        updated.stopLoss = newSl;
+      }
+    }
+  }
+
+  // 6. Check TP2 (Close 30% additional, move SL to TP1, & Liberate 30% Margin)
   const isTp2Reached =
     updated.tp1Hit &&
     !updated.tp2Hit &&
@@ -577,44 +660,43 @@ export function processPaperTradeUpdate(
 
   if (isTp2Reached) {
     updated.tp2Hit = true;
+    const origMargin = updated.originalMargin || (updated.margin / 0.5);
     const closedSize = updated.positionSize * 0.3;
     const unitsClosed = closedSize / updated.actualEntryPrice;
-    const lockedPnl =
+    const lockedGross =
       updated.side === 'LONG'
         ? (updated.tp2 - updated.actualEntryPrice) * unitsClosed
         : (updated.actualEntryPrice - updated.tp2) * unitsClosed;
+    const comm = 0.12;
+    const lockedNet = Number((lockedGross - comm).toFixed(2));
 
-    updated.grossPnl += lockedPnl;
-    updated.remainingSizeRatio -= 0.3; // Remaining: 0.2
-    updated.trailingActive = true;
-    updated.commissionPaid += 0.003;
+    updated.grossPnl += lockedGross;
+    updated.remainingSizeRatio = 0.2; // Remaining: 20%
+    const releasedMargin = Number((origMargin * 0.3).toFixed(2));
+    updated.margin = Number((origMargin * 0.2).toFixed(2)); // Remaining margin: 20%
+    updated.commissionPaid += comm;
 
-    // Set trailing stop level behind current price by 1x ATR distance
-    const dist = updated.trailingDistance > 0 ? updated.trailingDistance : Math.abs(updated.tp2 - updated.tp1) * 0.6;
-    updated.stopLoss =
-      updated.side === 'LONG' ? currentPrice - dist : currentPrice + dist;
+    // Rule: عند وصول السعر إلى TP2: أغلق 30% إضافية، وانقل وقف الخسارة إلى TP1.
+    updated.stopLoss = updated.tp1;
+    updated.slCalculationReason = 'نقل الوقف إلى TP1 بعد تحقيق TP2 لحجز الأرباح';
 
     const notif = {
       title: `${updated.symbol} حقق TP2! [${portfolioLabel}] 🚀`,
-      body: `تحقيق الهدف الثاني عند ${formatPrice(updated.tp2)} - إغلاق 30% إضافية وتفعيل Trailing Stop بنجاح.`,
+      body: `تحقيق الهدف الثاني عند ${formatPrice(updated.tp2)} - إغلاق 30% إضافية (+${lockedNet} USDT)، نقل الوقف إلى TP1، وتحرير $${releasedMargin} من الهامش.`,
     };
     sendTradingNotification(notif.title, notif.body, soundEnabled);
-    return { updatedTrade: updated, closed: false, notification: notif };
+    return {
+      updatedTrade: updated,
+      closed: false,
+      partialClosed: true,
+      partialStage: 'TP2',
+      partialPnL: lockedNet,
+      releasedMargin,
+      notification: notif,
+    };
   }
 
-  // 6. Update Trailing Stop if active
-  if (updated.trailingActive && updated.tp2Hit) {
-    const dist = updated.trailingDistance > 0 ? updated.trailingDistance : Math.abs(updated.tp2 - updated.tp1) * 0.6;
-    if (updated.side === 'LONG') {
-      const newSl = updated.highestPriceSeen - dist;
-      if (newSl > updated.stopLoss) updated.stopLoss = newSl;
-    } else {
-      const newSl = updated.lowestPriceSeen + dist;
-      if (newSl < updated.stopLoss) updated.stopLoss = newSl;
-    }
-  }
-
-  // 7. Check TP3 (Close remaining 20%)
+  // 7. Check TP3 (Close remaining 20% and close the entire trade)
   if (updated.tp3 && !updated.tp3Hit && updated.tp2Hit) {
     const isTp3Reached =
       updated.side === 'LONG' ? currentPrice >= updated.tp3 : currentPrice <= updated.tp3;
@@ -626,23 +708,35 @@ export function processPaperTradeUpdate(
       updated.exitPrice = updated.tp3;
 
       const remainingUnits = (updated.positionSize * updated.remainingSizeRatio) / updated.actualEntryPrice;
-      const finalPnl =
+      const finalGross =
         updated.side === 'LONG'
           ? (updated.tp3 - updated.actualEntryPrice) * remainingUnits
           : (updated.actualEntryPrice - updated.tp3) * remainingUnits;
 
-      updated.grossPnl += finalPnl;
+      updated.grossPnl += finalGross;
       updated.remainingSizeRatio = 0;
-      updated.commissionPaid += 0.002;
+      updated.commissionPaid += 0.08;
+      const finalRemainingNet = Number((finalGross - 0.08).toFixed(2));
       updated.netPnl = Number((updated.grossPnl - updated.commissionPaid - updated.slippagePaid - updated.fundingPaid).toFixed(3));
-      updated.pnlPercent = Number(((updated.netPnl / updated.margin) * 100).toFixed(2));
+      const origMargin = updated.originalMargin || 10;
+      updated.pnlPercent = Number(((updated.netPnl / origMargin) * 100).toFixed(2));
+
+      const releasedMargin = updated.margin;
+      updated.margin = 0;
 
       const notif = {
         title: `${updated.symbol} بلغ TP3 بالكامل! [${portfolioLabel}] 🏆`,
-        body: `إغلاق كامل الصفقة عند أقصى هدف ${formatPrice(updated.tp3)} بربح صافي +${updated.netPnl} USDT (+${updated.rMultiple}R).`,
+        body: `إغلاق الـ 20% المتبقية عند أقصى هدف ${formatPrice(updated.tp3)} بربح إجمالي +${updated.netPnl} USDT (+${updated.rMultiple}R).`,
       };
       sendTradingNotification(notif.title, notif.body, soundEnabled);
-      return { updatedTrade: updated, closed: true, notification: notif };
+      return {
+        updatedTrade: updated,
+        closed: true,
+        partialStage: 'TP3',
+        partialPnL: finalRemainingNet,
+        releasedMargin,
+        notification: notif,
+      };
     }
   }
 
@@ -667,7 +761,7 @@ export function processPaperTradeUpdate(
 
     updated.grossPnl += slPnl;
     updated.remainingSizeRatio = 0;
-    updated.commissionPaid += 0.002;
+    updated.commissionPaid += 0.05;
     updated.netPnl = Number((updated.grossPnl - updated.commissionPaid - updated.slippagePaid - updated.fundingPaid).toFixed(3));
     updated.pnlPercent = Number(((updated.netPnl / updated.margin) * 100).toFixed(2));
 

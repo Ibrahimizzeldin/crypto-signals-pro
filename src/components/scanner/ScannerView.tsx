@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { useCryptoStore } from '../../store/useCryptoStore';
-import { SetupPattern, Timeframe } from '../../types/crypto';
+import { SetupPattern, Timeframe, PortfolioId } from '../../types/crypto';
 import { scannerEngine, ScannerProgress } from '../../services/scannerEngine';
 import {
   ScanLine,
@@ -31,7 +31,16 @@ import { BtcCorrelationCategory } from '../../types/crypto';
 import { getProjectStrengthScore } from '../../services/projectStrengthService';
 
 export const ScannerView: React.FC = () => {
-  const { tickers, signalCache, setSelectedSymbol, setDetailModalOpen } = useCryptoStore();
+  const {
+    tickers,
+    signalCache,
+    setSelectedSymbol,
+    setDetailModalOpen,
+    openTradeManually,
+    portfolios,
+    setActiveTab,
+    marketRegime,
+  } = useCryptoStore();
 
   // Filters & Sorting state - 'STRONG_ONLY' (60+) is default
   const [strengthFilter, setStrengthFilter] = useState<'STRONG_ONLY' | 'ALL'>('STRONG_ONLY');
@@ -46,6 +55,7 @@ export const ScannerView: React.FC = () => {
 
   // Expandable score breakdown for specific symbol
   const [expandedSymbol, setExpandedSymbol] = useState<string | null>(null);
+  const [openingSymbol, setOpeningSymbol] = useState<string | null>(null);
 
   // Scanner Progress from background engine
   const [scanProgress, setScanProgress] = useState<ScannerProgress>({
@@ -72,6 +82,13 @@ export const ScannerView: React.FC = () => {
     setScanningSingleSymbol(sym);
     await scannerEngine.scanSingleSymbol(sym, true);
     setScanningSingleSymbol(null);
+  };
+
+  const handleManualOpenTrade = (sym: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setOpeningSymbol(sym);
+    openTradeManually(sym);
+    setTimeout(() => setOpeningSymbol(null), 800);
   };
 
   const handleOpenCoinModal = (sym: string) => {
@@ -264,6 +281,19 @@ export const ScannerView: React.FC = () => {
           return false;
         }
 
+        // Rule: Reject any signal where R:R is less than 1.5
+        if (item.riskReward < 1.5) {
+          return false;
+        }
+
+        // Rule: If market condition is Ranging, reject Breakout pattern
+        if (marketRegime?.regime === 'RANGING' && item.setupPattern === 'BREAKOUT') {
+          return false;
+        }
+        if (marketRegime?.regime === 'VOLATILE') {
+          return false;
+        }
+
         return true;
       })
       .sort((a, b) => {
@@ -283,6 +313,8 @@ export const ScannerView: React.FC = () => {
     minVolumeFilter,
     sortBy,
     searchQuery,
+    strengthFilter,
+    marketRegime,
   ]);
 
   return (
@@ -686,6 +718,31 @@ export const ScannerView: React.FC = () => {
                   </button>
 
                   <div className="flex items-center gap-2">
+                    {/* Manual Open (فتح يدوي) Button to bypass filters and open immediately */}
+                    {(() => {
+                      const pIds: PortfolioId[] = ['PORTFOLIO_A', 'PORTFOLIO_B', 'PORTFOLIO_C'];
+                      const isOpenInActive = pIds.some((pid) =>
+                        portfolios[pid]?.trades?.some((t) => t.symbol === item.symbol && t.status === 'OPEN')
+                      );
+                      const isOpening = openingSymbol === item.symbol;
+
+                      return (
+                        <button
+                          onClick={(e) => handleManualOpenTrade(item.symbol, e)}
+                          disabled={isOpenInActive || isOpening}
+                          className={`px-2.5 py-1 rounded-lg text-[10px] font-bold flex items-center gap-1 transition active:scale-95 ${
+                            isOpenInActive
+                              ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 cursor-default'
+                              : 'bg-emerald-500 hover:bg-emerald-400 text-black shadow-sm font-extrabold'
+                          }`}
+                          title="فتح الصفقة فوراً في المحافظ الثلاث وتجاوز فلاتر البوت لتظهر في صفحة نشطة"
+                        >
+                          <Zap className={`w-3 h-3 ${isOpening ? 'animate-bounce' : ''}`} />
+                          <span>{isOpenInActive ? 'مفتوحة في نشطة ✓' : isOpening ? 'جارٍ الفتح...' : 'فتح يدوي'}</span>
+                        </button>
+                      );
+                    })()}
+
                     {/* Manual Refresh / Re-Scan Button */}
                     <button
                       onClick={(e) => handleManualScanSymbol(item.symbol, e)}
