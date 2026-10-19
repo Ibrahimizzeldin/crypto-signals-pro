@@ -136,6 +136,13 @@ export interface MultiTimeframeAnalysis {
   supportResistance: SupportResistance;
   btcCorrelation?: BtcCorrelationInfo;
   projectStrength?: ProjectStrengthScore;
+  timeframe?: Timeframe;
+  tradeType?: 'SCALP' | 'DAY_TRADE' | 'SWING';
+  tradeTypeLabel?: string;
+  tradeTypeLabelArabic?: string;
+  macroTrend?: 'BULLISH' | 'BEARISH' | 'CONFLICTING';
+  macroTrendLabel?: string;
+  macroTrendSummaryArabic?: string;
   timestamp: number;
 }
 
@@ -325,6 +332,12 @@ export interface PaperTrade {
   projectStrengthTierArabic?: string;
   score?: number;         // Signal score out of 100
   scoreBreakdown?: SignalScoreBreakdown;
+  tradeType?: 'SCALP' | 'DAY_TRADE' | 'SWING';
+  tradeTypeLabel?: string;
+  tradeTypeLabelArabic?: string;
+  macroTrend?: 'BULLISH' | 'BEARISH' | 'CONFLICTING';
+  macroTrendLabel?: string;
+  macroTrendSummaryArabic?: string;
   createdAt: number;
   openedAt?: number;
   closedAt?: number;
@@ -340,6 +353,12 @@ export interface ClosedTradeRecord {
   pattern: SetupPattern;
   patternNameArabic: string;
   timeframe: Timeframe;
+  tradeType?: 'SCALP' | 'DAY_TRADE' | 'SWING';
+  tradeTypeLabel?: string;
+  tradeTypeLabelArabic?: string;
+  macroTrend?: 'BULLISH' | 'BEARISH' | 'CONFLICTING';
+  macroTrendLabel?: string;
+  macroTrendSummaryArabic?: string;
   entryPrice: number;
   exitPrice: number;
   netPnl: number;

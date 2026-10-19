@@ -30,6 +30,7 @@ import {
 import { isCryptoFuturesSymbol } from '../services/binanceApi';
 import { getProjectStrengthScore } from '../services/projectStrengthService';
 import { formatPrice } from '../utils/formatters';
+import { getTradeTypeInfo } from '../utils/tradeTypes';
 
 export type NavTab = 'home' | 'scanner' | 'active' | 'recommendations' | 'expert' | 'settings' | 'alerts' | 'performance' | 'journal';
 
@@ -114,7 +115,7 @@ interface CryptoState {
   // Paper Trading Actions
   setAutoTradingEnabled: (enabled: boolean) => void;
   addPaperTrade: (trade: PaperTrade, targetPortfolio?: PortfolioId) => void;
-  openTradeManually: (symbol: string) => boolean;
+  openTradeManually: (symbol: string, timeframe?: Timeframe) => boolean;
   closePaperTradeManually: (id: string, exitPrice?: number) => void;
   resetPortfolio: (portfolioId?: PortfolioId) => void;
   resetPaperAccount: () => void;
@@ -322,7 +323,7 @@ export const useCryptoStore = create<CryptoState>()(
           };
         }),
 
-      openTradeManually: (symbol: string) => {
+      openTradeManually: (symbol: string, timeframe: Timeframe = '15m') => {
         const { portfolios, tickers, signalCache, soundEnabled } = get();
         const cachedAnalysis = signalCache[symbol];
         const livePrice = tickers[symbol]?.lastPrice || (cachedAnalysis?.currentPrice) || 100;
@@ -332,11 +333,14 @@ export const useCryptoStore = create<CryptoState>()(
         const precision = livePrice > 0 ? (livePrice < 1 ? 4 : livePrice < 10 ? 3 : 2) : 2;
         const roundDec = (val: number) => Number(val.toFixed(precision));
 
-        // Enforce ATR & R:R >= 1.5 floor
+        // Dynamic Multi-Timeframe ATR multiplier based on requested timeframe
+        const typeInfo = getTradeTypeInfo(timeframe);
+        const atrMult = typeInfo.atrMultiplier;
+        const fallbackPct = timeframe === '1d' || timeframe === '3d' || timeframe === '1w' ? 0.04 : timeframe === '4h' ? 0.025 : 0.015;
         const estAtr = cachedAnalysis?.supportResistance?.nearestSupport
           ? Math.abs(livePrice - cachedAnalysis.supportResistance.nearestSupport)
-          : livePrice * 0.015;
-        const minSlDist = Math.max(livePrice * 0.012, estAtr * 1.5);
+          : livePrice * fallbackPct;
+        const minSlDist = Math.max(livePrice * fallbackPct * 0.8, estAtr * atrMult);
         const slPrice = isLong ? roundDec(livePrice - minSlDist) : roundDec(livePrice + minSlDist);
         const tp1Price = isLong ? roundDec(livePrice + minSlDist * 1.6) : roundDec(livePrice - minSlDist * 1.6);
         const tp2Price = isLong ? roundDec(livePrice + minSlDist * 2.5) : roundDec(livePrice - minSlDist * 2.5);
@@ -352,7 +356,7 @@ export const useCryptoStore = create<CryptoState>()(
           confidence: 85,
           agreedTimeframesCount: 5,
           totalTimeframesCount: 6,
-          timeframeResults: [],
+          timeframeResults: {} as any,
           setupPattern: pattern,
           patternNameArabic,
           executionStatus: 'READY_NOW',
@@ -387,16 +391,20 @@ export const useCryptoStore = create<CryptoState>()(
             entryDistancePercent: 0,
             tp1AtrDistance: 2.4,
             tp2AtrDistance: 3.8,
-            slAtrDistance: 1.5,
-            slCalculationReason: 'SL محسوب من: ATR × 1.5 (يدوي)',
+            slAtrDistance: atrMult,
+            slCalculationReason: `SL: ATR(${timeframe}) × ${atrMult} (يدوي)`,
           },
           currentPrice: livePrice,
-          explanation: 'صفقة مفتوحة يدوياً لتجاوز فلاتر البوت وبدء التداول الفوري',
+          explanation: `صفقة ${typeInfo.label} مفتوحة يدوياً لتجاوز فلاتر البوت وبدء التداول الفوري`,
           bullishScenario: '',
           bearishScenario: '',
           volatilityStatus: 'طبيعي',
           momentumStatus: 'قوي',
           supportResistance: { supports: [], resistances: [], nearestSupport: 0, nearestResistance: 0 },
+          timeframe,
+          tradeType: typeInfo.type,
+          tradeTypeLabel: typeInfo.label,
+          tradeTypeLabelArabic: typeInfo.labelArabic,
           timestamp: Date.now(),
         };
 
@@ -416,7 +424,7 @@ export const useCryptoStore = create<CryptoState>()(
           const alreadyOpen = openTrades.some((t) => t.symbol === symbol);
           if (alreadyOpen) return;
 
-          const newTrade = createPaperTradeForPortfolio(analysis, pid, '15m', livePrice);
+          const newTrade = createPaperTradeForPortfolio(analysis, pid, timeframe, livePrice);
           newTrade.status = 'OPEN';
           newTrade.actualEntryPrice = livePrice;
           newTrade.entryPrice = livePrice;
@@ -716,7 +724,8 @@ export const useCryptoStore = create<CryptoState>()(
         pIds.forEach((pid) => {
           const p = portfolios[pid];
           const cfg = PORTFOLIO_CONFIGS[pid];
-          // Unlimited concurrent trades as long as free margin is available
+          const slDist = Math.abs(analysis.targets.slPercent);
+          // Liquidation Protection and free margin check
           const check = canOpenNewTrade(
             analysis.symbol,
             side,
@@ -727,7 +736,11 @@ export const useCryptoStore = create<CryptoState>()(
             effectiveNewsPaused,
             cfg.marginPerTrade,
             score,
-            9999
+            9999,
+            undefined,
+            pid,
+            slDist,
+            timeframe
           );
 
           if (!check.allowed) return;
@@ -757,7 +770,7 @@ export const useCryptoStore = create<CryptoState>()(
           const marginUsed = activeOpen.reduce((acc, t) => acc + t.margin, 0);
           const totalUnrealized = activeOpen.reduce((acc, t) => acc + (t.netPnl || 0), 0);
           const currentEquity = Math.max(0, Number((newBalance + totalUnrealized).toFixed(2)));
-          const totalExposure = activeOpen.length * 1000;
+          const totalExposure = activeOpen.reduce((acc, t) => acc + (t.positionSize || 1000), 0);
 
           // Recompute Cross liquidation for all open positions in this portfolio
           newTrades = newTrades.map((t) => {
@@ -878,6 +891,9 @@ export const useCryptoStore = create<CryptoState>()(
                 pattern: updatedTrade.pattern,
                 patternNameArabic: updatedTrade.patternNameArabic || updatedTrade.pattern,
                 timeframe: updatedTrade.timeframe,
+                tradeType: updatedTrade.tradeType,
+                tradeTypeLabel: updatedTrade.tradeTypeLabel,
+                tradeTypeLabelArabic: updatedTrade.tradeTypeLabelArabic,
                 entryPrice: updatedTrade.actualEntryPrice,
                 exitPrice: stage === 'TP1' ? updatedTrade.tp1 : updatedTrade.tp2,
                 netPnl: partialPnL,
@@ -924,6 +940,9 @@ export const useCryptoStore = create<CryptoState>()(
                 pattern: updatedTrade.pattern,
                 patternNameArabic: updatedTrade.patternNameArabic || updatedTrade.pattern,
                 timeframe: updatedTrade.timeframe,
+                tradeType: updatedTrade.tradeType,
+                tradeTypeLabel: updatedTrade.tradeTypeLabel,
+                tradeTypeLabelArabic: updatedTrade.tradeTypeLabelArabic,
                 entryPrice: updatedTrade.actualEntryPrice,
                 exitPrice: updatedTrade.exitPrice || livePrice,
                 netPnl: updatedTrade.netPnl,

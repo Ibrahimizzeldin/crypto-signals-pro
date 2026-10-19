@@ -24,6 +24,7 @@ import {
   ShieldCheck,
   Clock,
 } from 'lucide-react';
+import { getTradeTypeInfo } from '../../utils/tradeTypes';
 
 interface ExpertRecommendationPrompt {
   id: string;
@@ -420,7 +421,103 @@ export const ExpertView: React.FC = () => {
         </div>
       </div>
 
-      {/* 5. Expert Improvement Recommendations with 50-Trade Gate & Mark as Done */}
+      {/* 5. Direct Closed Trades History Log (سجل الصفقات والإغلاقات الجزئية اللحظي) */}
+      <div className="bg-[#121824] border border-slate-800 rounded-2xl p-4 shadow-xl">
+        <div className="flex items-center justify-between mb-3">
+          <div className="flex items-center gap-2">
+            <Layers className="w-4 h-4 text-emerald-400" />
+            <h2 className="text-sm font-bold text-white">سجل العمليات والصفقات المنفذة (closedTradesHistory)</h2>
+          </div>
+          <span className="text-[10px] text-slate-400 font-num">
+            الإجمالي بالسجل: <strong className="text-emerald-400">{closedTradesHistory.length}</strong> عملية
+          </span>
+        </div>
+
+        {closedTradesHistory.length === 0 ? (
+          <div className="bg-slate-900/60 border border-slate-800/80 rounded-xl p-6 text-center text-xs text-slate-400">
+            <Clock className="w-6 h-6 text-slate-500 mx-auto mb-2 animate-pulse" />
+            <span>السجل ينتظر أول عملية إغلاق (عند وصول أي صفقة لـ TP1 أو TP2 أو TP3 أو SL). يتم تسجيل كل مرحلة فوراً هنا.</span>
+          </div>
+        ) : (
+          <div className="flex flex-col gap-2 max-h-96 overflow-y-auto pr-1">
+            {closedTradesHistory.slice(0, 20).map((t) => {
+              const isWin = t.netPnl >= 0;
+              const typeInfo = getTradeTypeInfo(t.timeframe || '15m');
+              const cfg = PORTFOLIO_CONFIGS[t.portfolioId];
+
+              const getReasonBadge = (reason: string) => {
+                switch (reason) {
+                  case 'TP1':
+                    return <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">🎯 TP1 (50%)</span>;
+                  case 'TP2':
+                    return <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-teal-500/20 text-teal-400 border border-teal-500/30">🚀 TP2 (30%)</span>;
+                  case 'TP3':
+                    return <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-500/30 text-emerald-300 border border-emerald-500/40">🏆 TP3 (20%)</span>;
+                  case 'SL':
+                    return <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-rose-500/20 text-rose-400 border border-rose-500/30">🛑 وقف خسارة SL</span>;
+                  case 'TRAILING_STOP':
+                    return <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-amber-500/20 text-amber-400 border border-amber-500/30">🛡️ وقف متحرك</span>;
+                  case 'MANUAL':
+                    return <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-sky-500/20 text-sky-400 border border-sky-500/30">✋ إغلاق يدوي</span>;
+                  case 'LIQUIDATED':
+                    return <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-red-600/30 text-red-300 border border-red-500/40">⚠️ تصفية</span>;
+                  default:
+                    return <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-slate-800 text-slate-300 border border-slate-700">{reason}</span>;
+                }
+              };
+
+              return (
+                <div
+                  key={t.id}
+                  className="bg-slate-900/80 border border-slate-800/80 rounded-xl p-3 flex flex-wrap items-center justify-between gap-2 text-xs hover:border-slate-700 transition"
+                >
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="font-black text-white font-num text-sm">{t.symbol}</span>
+                    <span className={`px-1.5 py-0.5 rounded text-[10px] font-black ${
+                      t.side === 'LONG'
+                        ? 'bg-emerald-500/15 text-emerald-400'
+                        : 'bg-red-500/15 text-red-400'
+                    }`}>
+                      {t.side}
+                    </span>
+                    {/* Multi-Timeframe Trade Type Badge */}
+                    <span className={`px-2 py-0.5 rounded text-[10px] font-bold font-num ${typeInfo.badgeClass}`}>
+                      {typeInfo.label}
+                    </span>
+                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-800 text-slate-300 font-num">
+                      {cfg?.shortName || t.portfolioId}
+                    </span>
+                    {getReasonBadge(t.closeReason)}
+                  </div>
+
+                  <div className="flex items-center gap-4 font-num text-left">
+                    <div className="text-[11px] text-slate-400">
+                      <span>دخول: ${formatPrice(t.entryPrice)}</span>
+                      <span className="mx-1">←</span>
+                      <span className="text-slate-200">خروج: ${formatPrice(t.exitPrice)}</span>
+                    </div>
+
+                    <div className="text-left font-num">
+                      <span className={`font-black text-xs block ${isWin ? 'text-emerald-400' : 'text-red-400'}`}>
+                        {isWin ? '+' : ''}${t.netPnl.toFixed(2)}
+                      </span>
+                      <span className={`text-[10px] font-bold ${isWin ? 'text-emerald-400' : 'text-red-400'}`}>
+                        {t.pnlPercent >= 0 ? '+' : ''}{t.pnlPercent.toFixed(1)}%
+                      </span>
+                    </div>
+
+                    <span className="text-[10px] text-slate-500 font-num">
+                      {new Date(t.closedAt).toLocaleTimeString('ar-SA', { hour: '2-digit', minute: '2-digit' })}
+                    </span>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
+      {/* 6. Expert Improvement Recommendations with 50-Trade Gate & Mark as Done */}
       <div className="bg-[#121824] border border-slate-800 rounded-2xl p-4 shadow-xl">
         <div className="flex items-center justify-between mb-4">
           <div className="flex items-center gap-2">

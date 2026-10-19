@@ -13,8 +13,9 @@ import {
   PortfolioState,
 } from '../types/crypto';
 import { formatPrice } from '../utils/formatters';
+import { getTradeTypeInfo } from '../utils/tradeTypes';
 
-// Portfolio Configurations for Pure Cross Margin Trading
+// Portfolio Configurations for Cross Margin Trading with Leverage Liquidation Protection
 export const PORTFOLIO_CONFIGS: Record<PortfolioId, PortfolioConfig> = {
   PORTFOLIO_A: {
     id: 'PORTFOLIO_A',
@@ -24,9 +25,9 @@ export const PORTFOLIO_CONFIGS: Record<PortfolioId, PortfolioConfig> = {
     marginPerTrade: 10, // $10 margin for $1,000 position size ($1,000 ÷ 100)
     positionSize: 1000,
     maxConcurrentTrades: 9999, // Unlimited trades while free margin permits
-    liquidationDistancePercent: 100.0, // Dynamic in Cross (buffer = Equity / (N * 1000))
+    liquidationDistancePercent: 1.0, // 1.0% liquidation distance for 100x leverage
     badgeColor: 'rose',
-    description: 'Cross Margin • رافعة 100x • حجم ثابت $1,000 • هامش $10 • صفقات غير محدودة طالما يوجد رصيد حر',
+    description: 'Cross Margin • رافعة 100x • حجم $1,000 • هامش $10 • مسافة تصفية 1.0%',
   },
   PORTFOLIO_B: {
     id: 'PORTFOLIO_B',
@@ -36,9 +37,9 @@ export const PORTFOLIO_CONFIGS: Record<PortfolioId, PortfolioConfig> = {
     marginPerTrade: 20, // $20 margin for $1,000 position size ($1,000 ÷ 50)
     positionSize: 1000,
     maxConcurrentTrades: 9999, // Unlimited trades while free margin permits
-    liquidationDistancePercent: 100.0,
+    liquidationDistancePercent: 2.0, // 2.0% liquidation distance for 50x leverage
     badgeColor: 'amber',
-    description: 'Cross Margin • رافعة 50x • حجم ثابت $1,000 • هامش $20 • صفقات غير محدودة طالما يوجد رصيد حر',
+    description: 'Cross Margin • رافعة 50x • حجم $1,000 • هامش $20 • مسافة تصفية 2.0%',
   },
   PORTFOLIO_C: {
     id: 'PORTFOLIO_C',
@@ -48,9 +49,9 @@ export const PORTFOLIO_CONFIGS: Record<PortfolioId, PortfolioConfig> = {
     marginPerTrade: 40, // $40 margin for $1,000 position size ($1,000 ÷ 25)
     positionSize: 1000,
     maxConcurrentTrades: 9999, // Unlimited trades while free margin permits
-    liquidationDistancePercent: 100.0,
+    liquidationDistancePercent: 4.0, // 4.0% liquidation distance for 25x leverage
     badgeColor: 'emerald',
-    description: 'Cross Margin • رافعة 25x • حجم ثابت $1,000 • هامش $40 • صفقات غير محدودة طالما يوجد رصيد حر',
+    description: 'Cross Margin • رافعة 25x • حجم $1,000 • هامش $40 • مسافة تصفية 4.0%',
   },
 };
 
@@ -245,7 +246,10 @@ export function canOpenNewTrade(
   marginRequired = 10,
   signalScore = 70,
   maxPositionsLimit = 15,
-  coinPauseUntil = 0
+  coinPauseUntil = 0,
+  portfolioId?: PortfolioId,
+  targetSlPercent?: number,
+  timeframe?: Timeframe
 ): { allowed: boolean; reason?: string } {
   // 1. Check coin-specific pause (from Binance announcement)
   if (coinPauseUntil && coinPauseUntil > Date.now()) {
@@ -299,7 +303,21 @@ export function canOpenNewTrade(
     return { allowed: false, reason: `توجد صفقة مفتوحة بالفعل لعملة ${symbol} في هذه المحفظة` };
   }
 
-  // 5. Margin Check (Rule: إذا وصل رصيد محفظة لأقل من الهامش المطلوب، توقف عن فتح صفقات جديدة فيها)
+  // 8. Liquidation Protection Check for Large Timeframes (4H, 1D, 3D, 1W)
+  // قبل فتح صفقة على فريم كبير، إذا كانت مسافة الاستوب (مثلاً 5%) أكبر من مسافة التصفية للرافعة العالية (1% في 100x):
+  // يتم رفض فتح الصفقة في المحفظة A لتفادي التصفية المؤكدة، وتوجيهها للمحافظ ذات الرافعة المتوافقة
+  if (portfolioId && targetSlPercent && targetSlPercent > 0) {
+    const cfg = PORTFOLIO_CONFIGS[portfolioId];
+    const isMacroTf = timeframe === '4h' || timeframe === '1d' || timeframe === '3d' || timeframe === '1w';
+    if (portfolioId === 'PORTFOLIO_A' && isMacroTf && targetSlPercent > cfg.liquidationDistancePercent * 2.5) {
+      return {
+        allowed: false,
+        reason: `حماية التصفية: مسافة وقف الخسارة (${targetSlPercent.toFixed(1)}%) تتجاوز مسافة تصفية المحفظة A ذات الرافعة 100x (${cfg.liquidationDistancePercent.toFixed(1)}%) - تم توجيهها للمحافظ الأقل رافعة`,
+      };
+    }
+  }
+
+  // 9. Margin Check (Rule: إذا وصل رصيد محفظة لأقل من الهامش المطلوب، توقف عن فتح صفقات جديدة فيها)
   const marginUsed = openTrades.reduce((acc, t) => acc + t.margin, 0);
   const availableBalance = Math.max(0, account.balance - marginUsed);
   if (availableBalance < marginRequired) {
@@ -375,10 +393,29 @@ export function createPaperTradeForPortfolio(
     }
   }
 
-  // Position size = $1,000 fixed across all 3
-  // Margin = $10 for A, $20 for B, $40 for C
-  const positionSize = 1000;
+  // 4. Calculate stop-loss distance %
+  const slDistPercent = actualEntryPrice > 0 ? Number((Math.abs((actualEntryPrice - sl) / actualEntryPrice) * 100).toFixed(2)) : Math.abs(slPercent);
+  const isLargeTimeframe = timeframe === '4h' || timeframe === '1d' || timeframe === '3d' || timeframe === '1w';
+
+  // 5. Dynamic Liquidation Protection:
+  // إذا كانت مسافة الاستوب (مثلاً 5%) أكبر من مسافة التصفية في المحفظة (1% في 100x):
+  // تقليل حجم الصفقة (Position Size) تلقائياً لزيادة مسافة التصفية لتكون آمنة وأكبر من مسافة الاستوب
+  let positionSize = 1000;
+  let effectiveLeverage = config.leverage;
   const allocatedMargin = config.marginPerTrade;
+  let isLiquidationProtected = false;
+
+  if (slDistPercent > config.liquidationDistancePercent) {
+    // توفير مسافة تصفية آمنة تتجاوز الوقف بهامش 35%
+    const safeLiqDistance = slDistPercent * 1.35;
+    const maxSafeLev = Math.max(1, Math.min(config.leverage, Math.floor(100 / safeLiqDistance)));
+    effectiveLeverage = maxSafeLev;
+    positionSize = Math.max(50, Math.round(allocatedMargin * effectiveLeverage));
+    isLiquidationProtected = true;
+  }
+
+  // Multi-Timeframe trade categorization
+  const typeInfo = getTradeTypeInfo(timeframe || analysis.timeframe || '15m');
 
   // Commission $0.40 only if trade actually opens
   const commissionPaid = hasExpired ? 0 : 0.40;
@@ -389,9 +426,13 @@ export function createPaperTradeForPortfolio(
   const scoreVal = analysis.scoreBreakdown?.totalScore ?? analysis.confidence;
   const slCalculationReason = analysis.targets.slCalculationReason || 'SL محسوب من: ATR × 1.5';
 
+  const liqNote = isLiquidationProtected
+    ? ` • 🛡️ درع حماية التصفية: تم تعديل الحجم إلى $${positionSize} (رافعة ${effectiveLeverage}x) لتأمين مسافة تصفية ${(100 / effectiveLeverage).toFixed(1)}% تتجاوز الوقف (${slDistPercent.toFixed(1)}%)`
+    : '';
+
   const notes = hasExpired
     ? `فاتت الصفقة (Expired): فارق السعر (${priceDiffPercent}% > 0.5%) بين الإشارة (${formatPrice(signalPrice)}) والحقيقي (${formatPrice(livePrice)})`
-    : `${analysis.patternNameArabic} • ${slCalculationReason} • سعر الإشارة: ${formatPrice(signalPrice)} | سعر الدخول الفعلي: ${formatPrice(actualEntryPrice)}`;
+    : `${analysis.patternNameArabic} • ${typeInfo.label} • ${slCalculationReason} • سعر الإشارة: ${formatPrice(signalPrice)} | سعر الدخول الفعلي: ${formatPrice(actualEntryPrice)}${liqNote}`;
 
   return {
     id: `trade-${portfolioId.toLowerCase()}-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
@@ -401,6 +442,9 @@ export function createPaperTradeForPortfolio(
     pattern: analysis.setupPattern,
     patternNameArabic: analysis.patternNameArabic,
     timeframe,
+    tradeType: typeInfo.type,
+    tradeTypeLabel: typeInfo.label,
+    tradeTypeLabelArabic: typeInfo.labelArabic,
     status,
     entryPrice: actualEntryPrice,
     signalPrice,
@@ -423,12 +467,12 @@ export function createPaperTradeForPortfolio(
     lowestPriceSeen: actualEntryPrice,
     margin: allocatedMargin,
     originalMargin: allocatedMargin,
-    leverage: config.leverage,
+    leverage: effectiveLeverage,
     positionSize,
     remainingSizeRatio: hasExpired ? 0 : 1.0,
     liquidationPrice: crossLiq.liquidationPrice,
-    liquidationDistancePercent: crossLiq.liquidationDistancePercent,
-    totalExposure: 1000,
+    liquidationDistancePercent: isLiquidationProtected ? Number((100 / effectiveLeverage).toFixed(1)) : crossLiq.liquidationDistancePercent,
+    totalExposure: positionSize,
     commissionPaid,
     slippagePaid,
     fundingPaid: 0,

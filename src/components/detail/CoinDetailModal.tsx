@@ -126,15 +126,16 @@ export const CoinDetailModal: React.FC<CoinDetailModalProps> = ({
     }
   };
 
-  // Real-time calculation of Multi-Timeframe Analysis
+  // Real-time calculation of Multi-Timeframe Analysis based on currently selected timeframe
   const analysis: MultiTimeframeAnalysis = useMemo(() => {
     return buildMultiTimeframeAnalysis(
       selectedSymbol,
       allTfCandles,
       currentPrice || 100,
-      fundingRate
+      fundingRate,
+      selectedTimeframe
     );
-  }, [selectedSymbol, allTfCandles, currentPrice, fundingRate]);
+  }, [selectedSymbol, allTfCandles, currentPrice, fundingRate, selectedTimeframe]);
 
   // Sync analysis to store safely only when core signal metrics change
   const lastSavedSignalKey = useRef('');

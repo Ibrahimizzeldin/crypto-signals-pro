@@ -21,6 +21,7 @@ import {
   Award,
 } from 'lucide-react';
 import { formatPrice } from '../../utils/formatters';
+import { getTradeTypeInfo } from '../../utils/tradeTypes';
 
 interface SignalCardProps {
   analysis: MultiTimeframeAnalysis;
@@ -153,6 +154,7 @@ export const SignalCard: React.FC<SignalCardProps> = ({
   const badge = getSignalBadge();
   const patternInfo = getPatternBadge(setupPattern);
   const executionInfo = getExecutionBadge(executionStatus);
+  const typeInfo = getTradeTypeInfo(analysis.timeframe || '15m');
   const displayTfs: Timeframe[] = ['15m', '1h', '4h', '1d', '3d', '1w'];
   const livePrice = useCryptoStore((s) => s.tickers[analysis.symbol]?.lastPrice) || currentPrice;
 
@@ -172,6 +174,13 @@ export const SignalCard: React.FC<SignalCardProps> = ({
             >
               {badge.icon}
               {badge.title}
+            </span>
+
+            {/* Multi-Timeframe Trade Type Badge: Scalp (15m) / Swing (1D) */}
+            <span
+              className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border text-xs font-bold font-num ${typeInfo.badgeClass}`}
+            >
+              {typeInfo.label}
             </span>
 
             {/* Pattern Badge */}

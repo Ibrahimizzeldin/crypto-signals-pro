@@ -27,6 +27,7 @@ import {
   getProjectStrengthScore,
   getProjectScoreConfidenceModifier,
 } from '../services/projectStrengthService';
+import { getTradeTypeInfo } from './tradeTypes';
 
 /**
  * Analyzes a single timeframe's candles to produce individual direction and score
@@ -136,15 +137,56 @@ export function analyzeSingleTimeframe(candles: Candle[], tf: Timeframe): Timefr
 }
 
 /**
+ * Aggregates daily candles into weekly candles as a robust fallback
+ */
+export function deriveWeeklyCandlesFromDaily(dailyCandles: Candle[]): Candle[] {
+  if (!dailyCandles || dailyCandles.length === 0) return [];
+  const weekly: Candle[] = [];
+  const chunkSize = 7;
+  for (let i = 0; i < dailyCandles.length; i += chunkSize) {
+    const chunk = dailyCandles.slice(i, i + chunkSize);
+    if (chunk.length === 0) continue;
+    const open = chunk[0].open;
+    const close = chunk[chunk.length - 1].close;
+    let high = -Infinity;
+    let low = Infinity;
+    let volume = 0;
+    for (const c of chunk) {
+      if (c.high > high) high = c.high;
+      if (c.low < low) low = c.low;
+      volume += c.volume;
+    }
+    weekly.push({
+      time: chunk[0].time,
+      open,
+      high,
+      low,
+      close,
+      volume,
+    });
+  }
+  return weekly;
+}
+
+/**
  * Executes Professional Multi-Timeframe Analysis Engine
  */
 export function buildMultiTimeframeAnalysis(
   symbol: string,
   timeframeCandles: Record<Timeframe, Candle[]>,
   currentPrice: number,
-  fundingRate: number = 0.0001
+  fundingRate: number = 0.0001,
+  targetTimeframe: Timeframe = '15m'
 ): MultiTimeframeAnalysis {
   const timeframes: Timeframe[] = ['15m', '1h', '4h', '1d', '3d', '1w'];
+  const execTimeframe: Timeframe = targetTimeframe || '15m';
+  const typeInfo = getTradeTypeInfo(execTimeframe);
+
+  // Guarantee weekly candles are available
+  const rawWeekly = timeframeCandles['1w'] || [];
+  const weeklyCandles = rawWeekly.length >= 8
+    ? rawWeekly
+    : deriveWeeklyCandlesFromDaily(timeframeCandles['1d'] || []);
 
   // 1. Analyze each timeframe individually
   const timeframeResults: Record<Timeframe, TimeframeSignal> = {
@@ -153,7 +195,7 @@ export function buildMultiTimeframeAnalysis(
     '4h': analyzeSingleTimeframe(timeframeCandles['4h'] || [], '4h'),
     '1d': analyzeSingleTimeframe(timeframeCandles['1d'] || [], '1d'),
     '3d': analyzeSingleTimeframe(timeframeCandles['3d'] || [], '3d'),
-    '1w': analyzeSingleTimeframe(timeframeCandles['1w'] || [], '1w'),
+    '1w': analyzeSingleTimeframe(weeklyCandles, '1w'),
     '5m': analyzeSingleTimeframe(timeframeCandles['5m'] || [], '5m'),
     '1m': analyzeSingleTimeframe(timeframeCandles['1m'] || [], '1m'),
   };
@@ -173,16 +215,64 @@ export function buildMultiTimeframeAnalysis(
   let setupDirection: DirectionType = isBullish ? 'BULLISH' : 'BEARISH';
   const matchingTimeframesCount = isBullish ? buyVotes : sellVotes;
 
-  // 3. Technical & Price Action Context on Execution Timeframe (15m / 1h)
-  const execCandles = (timeframeCandles['15m'] && timeframeCandles['15m'].length >= 20)
+  // 2.1 Top-Down Macro Trend Analysis (1D & 1W Rule):
+  // - فحص فريم اليومي (1D) والأسبوعي (1W) للعملة قبل فتح الصفقة
+  // - إذا كان 1D و 1W صاعدين: يُسمح فقط بصفقات Long
+  // - إذا كان 1D و 1W هابطين: يُسمح فقط بصفقات Short
+  // - إذا كانا متضاربين: يُرفض فتح الصفقة
+  const res1D = timeframeResults['1d'];
+  const res1W = timeframeResults['1w'];
+  const is1dBullish = res1D?.direction === 'صاعد';
+  const is1dBearish = res1D?.direction === 'هابط';
+  const is1wBullish = res1W?.direction === 'صاعد';
+  const is1wBearish = res1W?.direction === 'هابط';
+
+  let macroTrend: 'BULLISH' | 'BEARISH' | 'CONFLICTING' = 'CONFLICTING';
+  let macroTrendLabel = 'متضارب 1D/1W ⚠️';
+  let macroTrendSummaryArabic = `1D: ${res1D?.direction || 'محايد'} | 1W: ${res1W?.direction || 'محايد'}`;
+
+  if (is1dBullish && is1wBullish) {
+    macroTrend = 'BULLISH';
+    macroTrendLabel = 'Daily & Weekly صاعد 🟢';
+    macroTrendSummaryArabic = '1D صاعد 🟢 و 1W صاعد 🟢 (شراء Long فقط)';
+  } else if (is1dBearish && is1wBearish) {
+    macroTrend = 'BEARISH';
+    macroTrendLabel = 'Daily & Weekly هابط 🔴';
+    macroTrendSummaryArabic = '1D هابط 🔴 و 1W هابط 🔴 (بيع Short فقط)';
+  } else {
+    macroTrend = 'CONFLICTING';
+    macroTrendLabel = 'اتجاه متضارب 1D/1W ⚠️';
+    macroTrendSummaryArabic = `تضارب بين اليومي 1D (${res1D?.direction || 'محايد'}) والأسبوعي 1W (${res1W?.direction || 'محايد'})`;
+  }
+
+  const isMacroAligned =
+    (setupDirection === 'BULLISH' && macroTrend === 'BULLISH') ||
+    (setupDirection === 'BEARISH' && macroTrend === 'BEARISH');
+  const isRejectedByMacroTrend = !isMacroAligned;
+
+  // 3. Technical & Price Action Context on Target Execution Timeframe
+  // Dynamically uses the selected timeframe's candles (5m/15m for Scalp, 1h for Day, 4h/1D for Swing)
+  const targetTfCandles = timeframeCandles[execTimeframe] || [];
+  const execCandles = targetTfCandles.length >= 14
+    ? targetTfCandles
+    : (timeframeCandles['15m'] && timeframeCandles['15m'].length >= 20)
     ? timeframeCandles['15m']
     : (timeframeCandles['1h'] && timeframeCandles['1h'].length >= 20)
     ? timeframeCandles['1h']
-    : (timeframeCandles['4h'] || []);
+    : (timeframeCandles['4h'] && timeframeCandles['4h'].length >= 14)
+    ? timeframeCandles['4h']
+    : (timeframeCandles['1d'] || []);
 
   const sr = calculateSupportResistance(execCandles, currentPrice);
   const atrArray = calculateATR(execCandles, 14);
-  const curAtr = atrArray[atrArray.length - 1] ?? currentPrice * 0.012;
+  const fallbackAtrPct = execTimeframe === '1d' || execTimeframe === '3d' || execTimeframe === '1w'
+    ? 0.04
+    : execTimeframe === '4h'
+    ? 0.025
+    : execTimeframe === '1h'
+    ? 0.018
+    : 0.012;
+  const curAtr = atrArray[atrArray.length - 1] ?? currentPrice * fallbackAtrPct;
 
   const ema20Arr = calculateEMA(execCandles, 20);
   const ema50Arr = calculateEMA(execCandles, 50);
@@ -272,42 +362,52 @@ export function buildMultiTimeframeAnalysis(
   let tp2 = 0;
   let tp3 = 0;
 
-  // Enforce ATR(14) 1.5x minimum distance
-  const minSlDistance = 1.5 * curAtr;
-  let slCalculationReason = 'SL محسوب من: ATR × 1.5';
+  // Enforce ATR multiplier based on Timeframe (Requirement 1):
+  // - 15m / 5m (Scalp): 1.5x (narrow stop, close targets)
+  // - 1h (Day Trade): 1.8x
+  // - 4h (Swing): 2.5x (wider stop, larger targets for 4h volatility)
+  // - 1D (Macro Swing): 3.0x (wide stop, huge targets for daily swings)
+  const atrMultiplier = typeInfo.atrMultiplier;
+  const minSlDistance = atrMultiplier * curAtr;
+  let slCalculationReason = `SL: ATR(${execTimeframe}) × ${atrMultiplier}`;
+
+  // Targets expand dynamically with the timeframe's ATR
+  const tp1AtrMult = Math.max(2.5, atrMultiplier * 1.6);
+  const tp2AtrMult = tp1AtrMult * 1.5;
+  const tp3AtrMult = tp1AtrMult * 2.2;
 
   if (setupDirection === 'BULLISH') {
     switch (setupPattern) {
       case 'BREAKOUT':
         entry = currentPrice;
         sl = Math.min(swingHigh - curAtr * 1.0, currentPrice - minSlDistance);
-        tp1 = entry + Math.max(curAtr * 2.5, minSlDistance * 1.5);
-        tp2 = entry + swingRange * 1.272;
-        tp3 = entry + swingRange * 1.618;
+        tp1 = entry + Math.max(curAtr * tp1AtrMult, minSlDistance * 1.5);
+        tp2 = entry + Math.max(swingRange * 1.272, curAtr * tp2AtrMult);
+        tp3 = entry + Math.max(swingRange * 1.618, curAtr * tp3AtrMult);
         break;
       case 'RETEST':
         entry = sr.nearestSupport > 0 ? sr.nearestSupport : currentPrice - curAtr * 0.4;
         sl = entry - minSlDistance;
-        tp1 = swingHigh > entry + curAtr ? swingHigh : entry + Math.max(curAtr * 2.5, minSlDistance * 1.5);
-        tp2 = entry + swingRange * 1.272;
-        tp3 = entry + swingRange * 1.618;
+        tp1 = swingHigh > entry + curAtr ? swingHigh : entry + Math.max(curAtr * tp1AtrMult, minSlDistance * 1.5);
+        tp2 = entry + Math.max(swingRange * 1.272, curAtr * tp2AtrMult);
+        tp3 = entry + Math.max(swingRange * 1.618, curAtr * tp3AtrMult);
         break;
       case 'PULLBACK':
         entry = Math.min(currentPrice, Math.max(curEMA20, curEMA50));
         sl = Math.min(curEMA50 - curAtr * 0.8, entry - minSlDistance);
-        tp1 = entry + Math.max(curAtr * 2.5, minSlDistance * 1.5);
-        tp2 = entry + swingRange * 1.272;
-        tp3 = entry + swingRange * 1.618;
+        tp1 = entry + Math.max(curAtr * tp1AtrMult, minSlDistance * 1.5);
+        tp2 = entry + Math.max(swingRange * 1.272, curAtr * tp2AtrMult);
+        tp3 = entry + Math.max(swingRange * 1.618, curAtr * tp3AtrMult);
         break;
     }
 
-    // Mandatory rule: Minimum SL distance = 1.5 × ATR(14)
+    // Minimum SL distance = atrMultiplier × ATR
     const currentSlDist = entry - sl;
     if (currentSlDist < minSlDistance) {
       sl = entry - minSlDistance;
-      slCalculationReason = 'SL محسوب من: ATR × 1.5';
+      slCalculationReason = `SL: ATR(${execTimeframe}) × ${atrMultiplier}`;
     } else {
-      slCalculationReason = `SL محسوب من: ATR × 1.5 (هيكلي ${(currentSlDist / curAtr).toFixed(1)}×)`;
+      slCalculationReason = `SL: ATR(${execTimeframe}) × ${atrMultiplier} (هيكلي ${(currentSlDist / curAtr).toFixed(1)}×)`;
     }
   } else {
     // BEARISH Setups
@@ -315,33 +415,33 @@ export function buildMultiTimeframeAnalysis(
       case 'BREAKOUT':
         entry = currentPrice;
         sl = Math.max(swingLow + curAtr * 1.0, currentPrice + minSlDistance);
-        tp1 = entry - Math.max(curAtr * 2.5, minSlDistance * 1.5);
-        tp2 = entry - swingRange * 1.272;
-        tp3 = entry - swingRange * 1.618;
+        tp1 = entry - Math.max(curAtr * tp1AtrMult, minSlDistance * 1.5);
+        tp2 = entry - Math.max(swingRange * 1.272, curAtr * tp2AtrMult);
+        tp3 = entry - Math.max(swingRange * 1.618, curAtr * tp3AtrMult);
         break;
       case 'RETEST':
         entry = sr.nearestResistance > 0 ? sr.nearestResistance : currentPrice + curAtr * 0.4;
         sl = entry + minSlDistance;
-        tp1 = swingLow < entry - curAtr ? swingLow : entry - Math.max(curAtr * 2.5, minSlDistance * 1.5);
-        tp2 = entry - swingRange * 1.272;
-        tp3 = entry - swingRange * 1.618;
+        tp1 = swingLow < entry - curAtr ? swingLow : entry - Math.max(curAtr * tp1AtrMult, minSlDistance * 1.5);
+        tp2 = entry - Math.max(swingRange * 1.272, curAtr * tp2AtrMult);
+        tp3 = entry - Math.max(swingRange * 1.618, curAtr * tp3AtrMult);
         break;
       case 'PULLBACK':
         entry = Math.max(currentPrice, Math.min(curEMA20, curEMA50));
         sl = Math.max(curEMA50 + curAtr * 0.8, entry + minSlDistance);
-        tp1 = entry - Math.max(curAtr * 2.5, minSlDistance * 1.5);
-        tp2 = entry - swingRange * 1.272;
-        tp3 = entry - swingRange * 1.618;
+        tp1 = entry - Math.max(curAtr * tp1AtrMult, minSlDistance * 1.5);
+        tp2 = entry - Math.max(swingRange * 1.272, curAtr * tp2AtrMult);
+        tp3 = entry - Math.max(swingRange * 1.618, curAtr * tp3AtrMult);
         break;
     }
 
-    // Mandatory rule: Minimum SL distance = 1.5 × ATR(14)
+    // Minimum SL distance = atrMultiplier × ATR
     const currentSlDist = sl - entry;
     if (currentSlDist < minSlDistance) {
       sl = entry + minSlDistance;
-      slCalculationReason = 'SL محسوب من: ATR × 1.5';
+      slCalculationReason = `SL: ATR(${execTimeframe}) × ${atrMultiplier}`;
     } else {
-      slCalculationReason = `SL محسوب من: ATR × 1.5 (هيكلي ${(currentSlDist / curAtr).toFixed(1)}×)`;
+      slCalculationReason = `SL: ATR(${execTimeframe}) × ${atrMultiplier} (هيكلي ${(currentSlDist / curAtr).toFixed(1)}×)`;
     }
   }
 
@@ -639,7 +739,7 @@ export function buildMultiTimeframeAnalysis(
     entryDistancePercent,
     isWeakTrade,
     weakTradeReason,
-    slCalculationReason: 'SL محسوب من: ATR × 1.5',
+    slCalculationReason,
     atr14: curAtr,
   };
 
@@ -690,6 +790,10 @@ export function buildMultiTimeframeAnalysis(
     supportResistance: sr,
     btcCorrelation: classifyBtcCorrelation(symbol, timeframeCandles['1h']),
     projectStrength,
+    timeframe: execTimeframe,
+    tradeType: typeInfo.type,
+    tradeTypeLabel: typeInfo.label,
+    tradeTypeLabelArabic: typeInfo.labelArabic,
     timestamp: Date.now(),
   };
 }

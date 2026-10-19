@@ -29,6 +29,7 @@ import { formatPrice } from '../../utils/formatters';
 import { classifyBtcCorrelation } from '../../utils/btcCorrelation';
 import { BtcCorrelationCategory } from '../../types/crypto';
 import { getProjectStrengthScore } from '../../services/projectStrengthService';
+import { getTradeTypeInfo } from '../../utils/tradeTypes';
 
 export const ScannerView: React.FC = () => {
   const {
@@ -87,7 +88,8 @@ export const ScannerView: React.FC = () => {
   const handleManualOpenTrade = (sym: string, e: React.MouseEvent) => {
     e.stopPropagation();
     setOpeningSymbol(sym);
-    openTradeManually(sym);
+    const tf = timeframeFilter !== 'ALL' ? timeframeFilter : '15m';
+    openTradeManually(sym, tf);
     setTimeout(() => setOpeningSymbol(null), 800);
   };
 
@@ -183,6 +185,7 @@ export const ScannerView: React.FC = () => {
             isWatch: breakdown.totalScore >= 55 && breakdown.totalScore < 70,
             isCached: true,
             btcRel: cached.btcCorrelation || classifyBtcCorrelation(sym),
+            timeframe: cached.timeframe || (timeframeFilter !== 'ALL' ? timeframeFilter : '15m'),
           };
         }
 
@@ -233,6 +236,7 @@ export const ScannerView: React.FC = () => {
           isWatch,
           isCached: false,
           btcRel: classifyBtcCorrelation(sym),
+          timeframe: (timeframeFilter !== 'ALL' ? timeframeFilter : '15m'),
         };
       })
       .filter((item) => {
@@ -620,6 +624,18 @@ export const ScannerView: React.FC = () => {
                       <span>{item.totalScore}</span>
                       <span className="text-[10px] font-normal opacity-70">/100</span>
                     </div>
+
+                    {/* Multi-Timeframe Trade Type Badge: Scalp (15m) / Swing (1D) */}
+                    {(() => {
+                      const typeInfo = getTradeTypeInfo(item.timeframe || (timeframeFilter !== 'ALL' ? timeframeFilter : '15m'));
+                      return (
+                        <span
+                          className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md border text-[10px] font-bold font-num ${typeInfo.badgeClass}`}
+                        >
+                          {typeInfo.label}
+                        </span>
+                      );
+                    })()}
 
                     {/* Pattern Badge */}
                     <span

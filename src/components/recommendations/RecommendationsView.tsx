@@ -21,6 +21,7 @@ import {
 } from 'lucide-react';
 
 import { getProjectStrengthScore } from '../../services/projectStrengthService';
+import { getTradeTypeInfo } from '../../utils/tradeTypes';
 
 export const RecommendationsView: React.FC = () => {
   const {
@@ -307,15 +308,25 @@ ${analysis.targets.tp3 ? `🎯 الهدف 3 (TP3): ${formatPrice(analysis.target
                       </div>
                     </div>
 
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      {/* Multi-Timeframe Trade Type Badge */}
+                      {(() => {
+                        const typeInfo = getTradeTypeInfo(rec.timeframe || '15m');
+                        return (
+                          <span className={`px-2 py-0.5 rounded text-[10px] font-bold font-num ${typeInfo.badgeClass}`}>
+                            {typeInfo.label}
+                          </span>
+                        );
+                      })()}
+
                       {/* Pattern Badge */}
-                      <span className="flex items-center gap-1 px-2 py-1 rounded-xl bg-slate-900 border border-slate-800 text-slate-300 text-[11px] font-bold">
+                      <span className="flex items-center gap-1 px-2 py-0.5 rounded-md bg-slate-900 border border-slate-800 text-slate-300 text-[10px] font-bold">
                         <span>{getPatternEmoji(rec.setupPattern)}</span>
                         <span>{rec.patternNameArabic}</span>
                       </span>
 
                       {/* Confidence Score Pill */}
-                      <div className="px-2.5 py-1 rounded-xl bg-sky-500/10 border border-sky-500/30 text-sky-400 font-num font-black text-xs">
+                      <div className="px-2 py-0.5 rounded-md bg-sky-500/10 border border-sky-500/30 text-sky-400 font-num font-black text-[11px]">
                         {rec.confidence}%
                       </div>
                     </div>

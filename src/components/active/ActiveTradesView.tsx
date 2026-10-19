@@ -18,7 +18,9 @@ import {
   Clock,
   Sparkles,
   Zap,
+  ShieldCheck,
 } from 'lucide-react';
+import { getTradeTypeInfo } from '../../utils/tradeTypes';
 
 export const ActiveTradesView: React.FC = () => {
   const {
@@ -279,13 +281,15 @@ export const ActiveTradesView: React.FC = () => {
             // Clamped progress percentage for visual bar (0% - 100%)
             const barWidth = Math.max(0, Math.min(100, Math.round(tp1Progress)));
             const portfolioName = trade.portfolioId ? PORTFOLIO_CONFIGS[trade.portfolioId]?.shortName : 'A (100x)';
+            const typeInfo = getTradeTypeInfo(trade.timeframe || '15m');
+            const isProtected = trade.positionSize < 1000;
 
             return (
               <div
                 key={trade.id}
                 className="bg-[#121824] border border-slate-800 rounded-2xl p-4 shadow-lg hover:border-slate-700 transition"
               >
-                {/* Top Row: Symbol, Side, Portfolio badge, Ranking indicator */}
+                {/* Top Row: Symbol, Side, Trade Type badge (Scalp/Swing), Portfolio badge, Liquidation Protection */}
                 <div className="flex items-center justify-between mb-3">
                   <div className="flex items-center gap-2.5">
                     <button
@@ -294,7 +298,7 @@ export const ActiveTradesView: React.FC = () => {
                     >
                       <CoinIcon symbol={trade.symbol} size="md" />
                       <div>
-                        <div className="flex items-center gap-2">
+                        <div className="flex items-center gap-2 flex-wrap">
                           <span className="text-sm font-black text-white font-num tracking-wide">
                             {trade.symbol.replace('USDT', '')}
                           </span>
@@ -308,14 +312,27 @@ export const ActiveTradesView: React.FC = () => {
                           >
                             {isLong ? 'LONG شراء' : 'SHORT بيع'}
                           </span>
+                          {/* Multi-Timeframe Trade Type Badge: Scalp (15m) / Swing (1D) */}
+                          <span className={`px-2 py-0.5 rounded text-[10px] font-bold font-num ${typeInfo.badgeClass}`}>
+                            {typeInfo.label}
+                          </span>
                           <span className="text-[10px] px-2 py-0.5 rounded bg-slate-800/80 text-slate-300 border border-slate-700/60 font-num">
                             {portfolioName}
                           </span>
+                          {isProtected && (
+                            <span
+                              className="text-[10px] px-2 py-0.5 rounded bg-purple-500/15 text-purple-300 border border-purple-500/30 font-bold font-num flex items-center gap-1"
+                              title={`حماية التصفية نشطة: تم تعديل حجم الصفقة إلى $${trade.positionSize} لتأمين مسافة تصفية آمنة تتجاوز الوقف`}
+                            >
+                              <ShieldCheck className="w-3 h-3 text-purple-400" />
+                              حماية التصفية (${trade.positionSize})
+                            </span>
+                          )}
                         </div>
                         <div className="flex items-center gap-2 text-[10px] text-slate-400 mt-0.5 font-medium">
                           <span>{getPatternEmoji(trade.pattern)} {trade.patternNameArabic || trade.pattern}</span>
                           <span>•</span>
-                          <span>{trade.timeframe}</span>
+                          <span className="font-num font-bold text-slate-300">{trade.timeframe}</span>
                           <span>•</span>
                           <span className="text-slate-500 font-num">
                             {new Date(trade.openedAt || trade.createdAt).toLocaleTimeString('ar-SA', { hour: '2-digit', minute: '2-digit' })}
