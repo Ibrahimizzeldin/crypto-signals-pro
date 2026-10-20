@@ -18,6 +18,7 @@ import {
   ArrowUpDown,
   Search,
   Zap,
+  Clock,
 } from 'lucide-react';
 
 import { getProjectStrengthScore } from '../../services/projectStrengthService';
@@ -34,14 +35,21 @@ export const RecommendationsView: React.FC = () => {
   } = useCryptoStore();
 
   const [directionFilter, setDirectionFilter] = useState<'ALL' | 'BUY' | 'SELL'>('ALL');
+  const [tradeTypeFilter, setTradeTypeFilter] = useState<'ALL' | 'SCALP' | 'SWING'>('ALL');
   const [sortBy, setSortBy] = useState<'CONFIDENCE' | 'TIME' | 'RR'>('CONFIDENCE');
   const [searchQuery, setSearchQuery] = useState('');
   const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [nowTime, setNowTime] = useState<number>(Date.now());
 
-  // Extract all valid recommendations with Smart Filtering (Rule: Max 15, <6h, entry diff <=1%, regime check)
+  // 1-second interval to drive live countdown timers
+  React.useEffect(() => {
+    const timer = setInterval(() => setNowTime(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, []);
+
+  // Extract all valid recommendations with strict 15-minute expiry & <= 0.5% entry slippage
   const recommendations = useMemo(() => {
-    const now = Date.now();
-    const SIX_HOURS_MS = 6 * 60 * 60 * 1000;
+    const FIFTEEN_MINUTES_MS = 15 * 60 * 1000; // 15 minutes exact expiry
 
     const list = Object.values(signalCache).filter((s) => {
       // 1. Must be verified crypto futures
@@ -54,17 +62,18 @@ export const RecommendationsView: React.FC = () => {
       const strength = getProjectStrengthScore(s.symbol);
       if (strength.totalScore < 60) return false;
 
-      // 4. Rule: Remove recommendation if older than 6 hours
-      if (s.timestamp && (now - s.timestamp) > SIX_HOURS_MS) {
+      // 4. Rule (Prompt 2.2): Remove recommendation if older than 15 minutes
+      const age = nowTime - (s.timestamp || nowTime);
+      if (age > FIFTEEN_MINUTES_MS) {
         return false;
       }
 
-      // 5. Rule: Remove if it missed the entry price by > 1%
+      // 5. Rule (Prompt 2.2): Remove if price moved away from entry by > 0.5% (فاتت الفرصة)
       const livePrice = tickers[s.symbol]?.lastPrice || s.currentPrice || s.targets.entry;
       const entryPrice = s.targets.entry;
       if (entryPrice > 0 && livePrice > 0) {
         const priceDiff = Math.abs(livePrice - entryPrice) / entryPrice;
-        if (priceDiff > 0.01) {
+        if (priceDiff > 0.005) { // 0.5% threshold
           return false;
         }
       }
@@ -80,6 +89,13 @@ export const RecommendationsView: React.FC = () => {
         if (marketRegime.regime === 'RANGING' && s.setupPattern === 'BREAKOUT') return false;
         if (marketRegime.allowedTradeSides === 'LONG_ONLY' && s.overallDirection !== 'BULLISH') return false;
         if (marketRegime.allowedTradeSides === 'SHORT_ONLY' && s.overallDirection !== 'BEARISH') return false;
+      }
+
+      // 8. Trade Type Filter (الكل / Scalp / Swing)
+      if (tradeTypeFilter !== 'ALL') {
+        const typeInfo = getTradeTypeInfo(s.timeframe || '15m');
+        if (tradeTypeFilter === 'SCALP' && typeInfo.type !== 'SCALP') return false;
+        if (tradeTypeFilter === 'SWING' && typeInfo.type !== 'SWING' && typeInfo.type !== 'DAY_TRADE') return false;
       }
 
       return true;
@@ -115,9 +131,9 @@ export const RecommendationsView: React.FC = () => {
       return (b.timestamp || 0) - (a.timestamp || 0);
     });
 
-    // Rule: Show ONLY the top 15 recommendations (حسب نقاط الجودة)
+    // Show ONLY active, valid opportunities
     return sorted.slice(0, 15);
-  }, [signalCache, tickers, marketRegime, directionFilter, sortBy, searchQuery]);
+  }, [signalCache, tickers, marketRegime, directionFilter, tradeTypeFilter, sortBy, searchQuery, nowTime]);
 
   // Copy recommendation data as clean Arabic text to clipboard
   const handleCopy = (analysis: MultiTimeframeAnalysis) => {
@@ -171,7 +187,7 @@ ${analysis.targets.tp3 ? `🎯 الهدف 3 (TP3): ${formatPrice(analysis.target
                 </span>
               </div>
               <p className="text-xs text-slate-400 mt-0.5">
-                أعلى 15 توصية نشطة مفلترة ذكياً (خلال 6 ساعات • فرق دخول ≤ 1% • متوافقة مع اتجاه السوق)
+                أعلى 15 توصية نشطة مفلترة ذكياً (خلال 15 دقيقة • فرق دخول ≤ 0.5% • متوافقة مع اتجاه السوق)
               </p>
             </div>
           </div>
@@ -220,6 +236,27 @@ ${analysis.targets.tp3 ? `🎯 الهدف 3 (TP3): ${formatPrice(analysis.target
               <TrendingDown className="w-3.5 h-3.5" />
               <span>بيع</span>
             </button>
+          </div>
+
+          {/* Prompt Requirement: Horizontal Scrollable Chips (التوصيات: الكل/Scalp/Swing) */}
+          <div className="flex items-center gap-1.5 overflow-x-auto pb-0.5 no-scrollbar text-xs">
+            {[
+              { id: 'ALL', label: 'كافة الأنماط (الكل)' },
+              { id: 'SCALP', label: '⚡ مضاربة سريعة (Scalp)' },
+              { id: 'SWING', label: '🎯 صفقات سوينغ (Swing)' },
+            ].map((chip) => (
+              <button
+                key={chip.id}
+                onClick={() => setTradeTypeFilter(chip.id as any)}
+                className={`px-3 py-1 text-xs rounded-xl font-bold whitespace-nowrap transition border ${
+                  tradeTypeFilter === chip.id
+                    ? 'bg-purple-600 text-white border-purple-500 shadow-sm'
+                    : 'bg-slate-900 text-slate-400 border-slate-800 hover:text-white'
+                }`}
+              >
+                {chip.label}
+              </button>
+            ))}
           </div>
 
           {/* Sort Selector & Search */}
@@ -329,6 +366,29 @@ ${analysis.targets.tp3 ? `🎯 الهدف 3 (TP3): ${formatPrice(analysis.target
                       <div className="px-2 py-0.5 rounded-md bg-sky-500/10 border border-sky-500/30 text-sky-400 font-num font-black text-[11px]">
                         {rec.confidence}%
                       </div>
+
+                      {/* Expiry Countdown Timer Badge (Prompt 2.2) */}
+                      {(() => {
+                        const FIFTEEN_MINUTES_MS = 15 * 60 * 1000;
+                        const age = nowTime - (rec.timestamp || nowTime);
+                        const remainingMs = Math.max(0, FIFTEEN_MINUTES_MS - age);
+                        const remainingMins = Math.floor(remainingMs / 60000);
+                        const remainingSecs = Math.floor((remainingMs % 60000) / 1000);
+
+                        return (
+                          <div
+                            className={`flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-bold font-num border ${
+                              remainingMins < 3
+                                ? 'bg-red-500/15 text-red-300 border-red-500/30 animate-pulse'
+                                : 'bg-amber-500/15 text-amber-300 border-amber-500/30'
+                            }`}
+                            title="صلاحية التوصية 15 دقيقة كحد أقصى أو إلغاء تلقائي إذا تحرك السعر > 0.5%"
+                          >
+                            <Clock className="w-3 h-3 text-amber-400 shrink-0" />
+                            <span>متبقي {remainingMins}:{remainingSecs < 10 ? `0${remainingSecs}` : remainingSecs}</span>
+                          </div>
+                        );
+                      })()}
                     </div>
                   </div>
 

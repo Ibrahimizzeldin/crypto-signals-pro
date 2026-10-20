@@ -29,7 +29,7 @@ export function getTradeTypeInfo(timeframe: Timeframe = '15m'): TradeTypeInfo {
         badgeBorder: 'border-amber-500/30',
         textColor: 'text-amber-400',
         badgeClass: 'bg-amber-500/15 text-amber-400 border border-amber-500/30',
-        atrMultiplier: 1.2,
+        atrMultiplier: 1.5,
         timeframe,
       };
     case '15m':
@@ -81,7 +81,7 @@ export function getTradeTypeInfo(timeframe: Timeframe = '15m'): TradeTypeInfo {
         badgeBorder: 'border-indigo-500/30',
         textColor: 'text-indigo-400',
         badgeClass: 'bg-indigo-500/15 text-indigo-400 border border-indigo-500/30',
-        atrMultiplier: 3.0,
+        atrMultiplier: 2.5,
         timeframe,
       };
   }

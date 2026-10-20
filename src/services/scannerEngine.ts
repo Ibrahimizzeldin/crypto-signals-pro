@@ -91,7 +91,7 @@ class AutoScannerEngine {
         fetchKlines(symbol, '15m', 150, forceRefresh),
         fetchKlines(symbol, '1h', 150, forceRefresh),
         fetchKlines(symbol, '4h', 80, forceRefresh),
-        fetchKlines(symbol, '1d', 60, forceRefresh),
+        fetchKlines(symbol, '1d', 100, forceRefresh),
       ]);
 
       if (!k15m || k15m.length === 0) return null;
@@ -142,9 +142,9 @@ class AutoScannerEngine {
   }
 
   /**
-   * Continuous background batch scanner:
+   * Continuous background batch scanner (حلقة المسح اللانهائية):
    * Loops through all eligible Binance Futures symbols (volume >= 3M USDT)
-   * With priority for highest 15m/1h volume & volatility
+   * Once finished, waits 1 second to avoid API ban, then immediately restarts!
    */
   public async startBackgroundScanner() {
     if (this.isRunning) return;
@@ -161,8 +161,8 @@ class AutoScannerEngine {
         .sort((a, b) => b.quoteVolume - a.quoteVolume);
 
       if (eligibleTickers.length === 0) {
-        // Wait 3 seconds for initial tickers to load
-        await new Promise((r) => setTimeout(r, 3000));
+        // Wait 2 seconds for initial tickers to load
+        await new Promise((r) => setTimeout(r, 2000));
         continue;
       }
 
@@ -170,14 +170,14 @@ class AutoScannerEngine {
         isScanning: true,
         scannedCount: 0,
         totalEligible: eligibleTickers.length,
-        currentSymbol: '',
+        currentSymbol: 'جاري المسح المستمر...',
         instantSignalsCount: 0,
         watchSignalsCount: 0,
         lastScanTimestamp: Date.now(),
       };
       this.notifyProgress();
 
-      // Scan in batches of 2 with 250ms spacing to maintain flawless rate limit compliance
+      // Scan in batches with 250ms spacing to maintain flawless rate limit compliance
       for (let i = 0; i < eligibleTickers.length; i++) {
         if (this.abortRequested) break;
 
@@ -198,7 +198,7 @@ class AutoScannerEngine {
             else if (sc >= 55) this.currentProgress.watchSignalsCount++;
           }
           // Polite delay between API calls
-          await new Promise((r) => setTimeout(r, 300));
+          await new Promise((r) => setTimeout(r, 250));
         } else {
           // Re-evaluate existing cache and execute if capacity is available
           const sc = cached.analysis.scoreBreakdown?.totalScore ?? cached.analysis.confidence;
@@ -211,16 +211,14 @@ class AutoScannerEngine {
         }
       }
 
-      this.currentProgress.isScanning = false;
-      this.currentProgress.currentSymbol = 'اكتملت دورة المسح';
+      // Requirement: حلقة المسح اللانهائية - ينتظر ثانية واحدة لتفادي حظر API ثم يبدأ من جديد
+      this.currentProgress.isScanning = true;
+      this.currentProgress.currentSymbol = 'جاري المسح المستمر...';
       this.currentProgress.lastScanTimestamp = Date.now();
       this.notifyProgress();
 
-      // Pause 30 seconds before next scan cycle
-      for (let wait = 0; wait < 30; wait++) {
-        if (this.abortRequested) break;
-        await new Promise((r) => setTimeout(r, 1000));
-      }
+      // Pause 1 second before restarting cycle immediately
+      await new Promise((r) => setTimeout(r, 1000));
     }
 
     this.isRunning = false;

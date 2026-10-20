@@ -1,6 +1,5 @@
 import React, { useState, useRef } from 'react';
 import { useCryptoStore } from '../../store/useCryptoStore';
-import { PWAInstallButton } from '../pwa/PWAInstallButton';
 import {
   Settings,
   Download,
@@ -11,6 +10,8 @@ import {
   ShieldAlert,
   Smartphone,
   CheckCircle,
+  AlertTriangle,
+  RotateCcw,
 } from 'lucide-react';
 
 export const SettingsView: React.FC = () => {
@@ -104,16 +105,6 @@ export const SettingsView: React.FC = () => {
           تطبيق الهاتف وتجربة العرض
         </h3>
 
-        <div className="flex items-center justify-between p-3 rounded-xl bg-slate-900/60 border border-slate-800">
-          <div className="flex items-center gap-2.5">
-            <Smartphone className="w-4 h-4 text-sky-400" />
-            <div>
-              <span className="text-xs font-bold text-white block">تثبيت PWA المستقل</span>
-              <span className="text-[11px] text-slate-400">تشغيل التطبيق بدون متصفح بكامل الشاشة</span>
-            </div>
-          </div>
-          <PWAInstallButton />
-        </div>
 
         <div className="flex items-center justify-between p-3 rounded-xl bg-slate-900/60 border border-slate-800">
           <div className="flex items-center gap-2.5">
@@ -254,19 +245,51 @@ export const SettingsView: React.FC = () => {
           />
         </div>
 
-        <div className="pt-2 border-t border-slate-800/80">
+      </div>
+
+      {/* Factory Reset Section (Prompt Requirement 2 & 5.3) */}
+      <div className="bg-[#121824] border border-red-900/40 rounded-2xl p-4 shadow-xl space-y-3">
+        <div className="flex items-center gap-2">
+          <RotateCcw className="w-5 h-5 text-red-400" />
+          <div>
+            <h3 className="text-xs font-black text-white">إعادة ضبط المصنع (Factory Reset)</h3>
+            <span className="text-[11px] text-slate-400">مسح كل الصفقات والسجل وإعادة رصيد المحافظ إلى 1000$ وتصفير الإحصائيات</span>
+          </div>
+        </div>
+
+        {confirmClear ? (
+          <div className="p-3 rounded-xl bg-red-950/60 border border-red-500/50 space-y-2.5">
+            <div className="flex items-center gap-2 text-xs text-red-300 font-bold">
+              <AlertTriangle className="w-4 h-4 text-red-400 shrink-0" />
+              <span>هل أنت متأكد من مسح جميع البيانات والبدء من جديد؟</span>
+            </div>
+            <p className="text-[11px] text-slate-300">
+              سيتم مسح كل الصفقات المفتوحة والمغلقة فوراً، وتصفير سجل العمليات، وإعادة رصيد محافظ A و B و C إلى 1000$ نقداً.
+            </p>
+            <div className="flex items-center gap-2 pt-1">
+              <button
+                onClick={handleClear}
+                className="flex-1 py-2 px-3 rounded-xl bg-red-600 hover:bg-red-500 text-white text-xs font-bold transition shadow-lg shadow-red-950/60"
+              >
+                نعم، امسح كل شيء وابدأ من جديد
+              </button>
+              <button
+                onClick={() => setConfirmClear(false)}
+                className="py-2 px-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-bold transition border border-slate-700"
+              >
+                إلغاء
+              </button>
+            </div>
+          </div>
+        ) : (
           <button
-            onClick={handleClear}
-            className={`w-full flex items-center justify-center gap-2 py-2.5 px-3 rounded-xl text-xs font-bold transition border ${
-              confirmClear
-                ? 'bg-red-600 hover:bg-red-500 text-white border-red-500 shadow-lg shadow-red-950/50'
-                : 'bg-red-500/10 hover:bg-red-500/20 text-red-400 border-red-500/30'
-            }`}
+            onClick={() => setConfirmClear(true)}
+            className="w-full flex items-center justify-center gap-2 py-2.5 px-3 rounded-xl bg-red-500/15 hover:bg-red-500/25 text-red-400 hover:text-red-300 text-xs font-bold transition border border-red-500/30 active:scale-[0.99]"
           >
             <Trash2 className="w-4 h-4" />
-            <span>{confirmClear ? 'اضغط مرة أخرى للتأكيد النهائي على مسح كل شيء' : 'مسح جميع البيانات المحلية وإعادة التعيين'}</span>
+            <span>مسح جميع البيانات والبدء من جديد</span>
           </button>
-        </div>
+        )}
       </div>
 
       {/* Disclaimer */}

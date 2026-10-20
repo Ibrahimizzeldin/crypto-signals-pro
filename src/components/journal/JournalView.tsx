@@ -27,11 +27,9 @@ export const JournalView: React.FC<JournalViewProps> = () => {
     portfolios,
     tickers,
     wsConnected,
-    closePaperTradeManually,
   } = useCryptoStore();
 
   const [selectedPortfolio, setSelectedPortfolio] = useState<PortfolioId | 'ALL'>('ALL');
-  const [closingTradeId, setClosingTradeId] = useState<string | null>(null);
 
   // Extract all open paper trades across portfolios
   const allOpenTrades = useMemo(() => {
@@ -77,13 +75,6 @@ export const JournalView: React.FC<JournalViewProps> = () => {
     allOpenTrades.reduce((acc, t) => acc + t.margin, 0).toFixed(2)
   );
 
-  const handleCloseTrade = (tradeId: string, currentPrice: number) => {
-    setClosingTradeId(tradeId);
-    setTimeout(() => {
-      closePaperTradeManually(tradeId, currentPrice);
-      setClosingTradeId(null);
-    }, 150);
-  };
 
   return (
     <div className="flex flex-col gap-4 p-4 pb-24 max-w-6xl mx-auto w-full text-right" dir="rtl">

@@ -303,16 +303,14 @@ export function canOpenNewTrade(
     return { allowed: false, reason: `توجد صفقة مفتوحة بالفعل لعملة ${symbol} في هذه المحفظة` };
   }
 
-  // 8. Liquidation Protection Check for Large Timeframes (4H, 1D, 3D, 1W)
-  // قبل فتح صفقة على فريم كبير، إذا كانت مسافة الاستوب (مثلاً 5%) أكبر من مسافة التصفية للرافعة العالية (1% في 100x):
-  // يتم رفض فتح الصفقة في المحفظة A لتفادي التصفية المؤكدة، وتوجيهها للمحافظ ذات الرافعة المتوافقة
+  // 8. Liquidation Protection Check (حماية التصفية):
+  // ارفض الصفقة في المحفظة التي يكون فيها مسافة SL أكبر من مسافة التصفية
   if (portfolioId && targetSlPercent && targetSlPercent > 0) {
     const cfg = PORTFOLIO_CONFIGS[portfolioId];
-    const isMacroTf = timeframe === '4h' || timeframe === '1d' || timeframe === '3d' || timeframe === '1w';
-    if (portfolioId === 'PORTFOLIO_A' && isMacroTf && targetSlPercent > cfg.liquidationDistancePercent * 2.5) {
+    if (targetSlPercent > cfg.liquidationDistancePercent) {
       return {
         allowed: false,
-        reason: `حماية التصفية: مسافة وقف الخسارة (${targetSlPercent.toFixed(1)}%) تتجاوز مسافة تصفية المحفظة A ذات الرافعة 100x (${cfg.liquidationDistancePercent.toFixed(1)}%) - تم توجيهها للمحافظ الأقل رافعة`,
+        reason: `حماية التصفية (${cfg.shortName}): مسافة وقف الخسارة (${targetSlPercent.toFixed(1)}%) أكبر من مسافة التصفية للرافعة (${cfg.liquidationDistancePercent.toFixed(1)}%) - تم رفض الصفقة لحماية المحفظة`,
       };
     }
   }
@@ -488,6 +486,9 @@ export function createPaperTradeForPortfolio(
     projectStrengthTierArabic: analysis.projectStrength?.tierArabic,
     score: scoreVal,
     scoreBreakdown: analysis.scoreBreakdown,
+    macroTrend: analysis.macroTrend,
+    macroTrendLabel: analysis.macroTrendLabel,
+    macroTrendSummaryArabic: analysis.macroTrendSummaryArabic,
     createdAt: Date.now(),
     openedAt: status === 'OPEN' ? Date.now() : undefined,
     closedAt: hasExpired ? Date.now() : undefined,

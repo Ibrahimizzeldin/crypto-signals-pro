@@ -56,7 +56,6 @@ export const ScannerView: React.FC = () => {
 
   // Expandable score breakdown for specific symbol
   const [expandedSymbol, setExpandedSymbol] = useState<string | null>(null);
-  const [openingSymbol, setOpeningSymbol] = useState<string | null>(null);
 
   // Scanner Progress from background engine
   const [scanProgress, setScanProgress] = useState<ScannerProgress>({
@@ -83,14 +82,6 @@ export const ScannerView: React.FC = () => {
     setScanningSingleSymbol(sym);
     await scannerEngine.scanSingleSymbol(sym, true);
     setScanningSingleSymbol(null);
-  };
-
-  const handleManualOpenTrade = (sym: string, e: React.MouseEvent) => {
-    e.stopPropagation();
-    setOpeningSymbol(sym);
-    const tf = timeframeFilter !== 'ALL' ? timeframeFilter : '15m';
-    openTradeManually(sym, tf);
-    setTimeout(() => setOpeningSymbol(null), 800);
   };
 
   const handleOpenCoinModal = (sym: string) => {
@@ -186,6 +177,8 @@ export const ScannerView: React.FC = () => {
             isCached: true,
             btcRel: cached.btcCorrelation || classifyBtcCorrelation(sym),
             timeframe: cached.timeframe || (timeframeFilter !== 'ALL' ? timeframeFilter : '15m'),
+            portfolioARejected: cached.portfolioARejected || false,
+            portfolioARejectionReason: cached.portfolioARejectionReason,
           };
         }
 
@@ -237,6 +230,7 @@ export const ScannerView: React.FC = () => {
           isCached: false,
           btcRel: classifyBtcCorrelation(sym),
           timeframe: (timeframeFilter !== 'ALL' ? timeframeFilter : '15m'),
+          portfolioARejected: false,
         };
       })
       .filter((item) => {
@@ -390,6 +384,60 @@ export const ScannerView: React.FC = () => {
             onChange={(e) => setSearchQuery(e.target.value)}
             className="w-full bg-slate-900/90 border border-slate-700/80 rounded-xl pr-9 pl-3 py-1.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-sky-500 font-num"
           />
+        </div>
+
+        {/* Horizontal Scrollable Filter Chips (Prompt Requirement: الماسح: شراء/بيع، الفريمات) */}
+        <div className="mt-3 pt-3 border-t border-slate-800 space-y-2">
+          {/* Row 1: Direction Filter (شراء / بيع) */}
+          <div className="flex items-center gap-1.5 overflow-x-auto pb-1 no-scrollbar text-xs">
+            <span className="text-[11px] text-slate-400 font-bold shrink-0 ml-1">الاتجاه:</span>
+            {[
+              { id: 'ALL', label: 'كافة الاتجاهات (الكل)' },
+              { id: 'BUY', label: '🟢 شراء (LONG فقط)' },
+              { id: 'SELL', label: '🔴 بيع (SHORT فقط)' },
+            ].map((f) => (
+              <button
+                key={f.id}
+                onClick={() => setSignalFilter(f.id as any)}
+                className={`px-3 py-1 text-xs rounded-xl font-bold whitespace-nowrap transition border ${
+                  signalFilter === f.id
+                    ? f.id === 'BUY'
+                      ? 'bg-emerald-600 text-white border-emerald-500 shadow-sm'
+                      : f.id === 'SELL'
+                      ? 'bg-rose-600 text-white border-rose-500 shadow-sm'
+                      : 'bg-sky-600 text-white border-sky-500 shadow-sm'
+                    : 'bg-slate-900 text-slate-400 border-slate-800 hover:text-white'
+                }`}
+              >
+                {f.label}
+              </button>
+            ))}
+          </div>
+
+          {/* Row 2: Timeframe Filter (الفريمات) */}
+          <div className="flex items-center gap-1.5 overflow-x-auto pb-1 no-scrollbar text-xs">
+            <span className="text-[11px] text-slate-400 font-bold shrink-0 ml-1">الفريم:</span>
+            {[
+              { id: 'ALL', label: 'كافة الفريمات' },
+              { id: '5m', label: '5m (Scalp)' },
+              { id: '15m', label: '15m (Scalp)' },
+              { id: '1h', label: '1h (Day Trade)' },
+              { id: '4h', label: '4h (Swing)' },
+              { id: '1d', label: '1D (Macro Swing)' },
+            ].map((tf) => (
+              <button
+                key={tf.id}
+                onClick={() => setTimeframeFilter(tf.id as any)}
+                className={`px-2.5 py-1 text-xs rounded-xl font-bold whitespace-nowrap transition border font-num ${
+                  timeframeFilter === tf.id
+                    ? 'bg-purple-600 text-white border-purple-500 shadow-sm'
+                    : 'bg-slate-900 text-slate-400 border-slate-800 hover:text-white'
+                }`}
+              >
+                {tf.label}
+              </button>
+            ))}
+          </div>
         </div>
 
         {/* 2. CoinGecko Project Strength Filter (Default: Strong 60+) */}
@@ -661,6 +709,17 @@ export const ScannerView: React.FC = () => {
                         <span className="opacity-70">({item.btcRel.coefficient >= 0 ? '+' : ''}{item.btcRel.coefficient})</span>
                       </span>
                     )}
+
+                    {/* Portfolio A Rejection Warning Badge */}
+                    {item.portfolioARejected && (
+                      <span
+                        className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md border text-[10px] font-bold bg-amber-500/15 text-amber-300 border-amber-500/40"
+                        title={item.portfolioARejectionReason || 'رفضت محفظة A الصفقة بسبب حماية التصفية 100x ونُفذت في المحافظ B و C'}
+                      >
+                        <AlertTriangle className="w-3 h-3 text-amber-400 shrink-0" />
+                        <span>رُفضت في (A) لحماية التصفية • نُفذت في B و C</span>
+                      </span>
+                    )}
                   </div>
 
                   {/* Price & Change */}
@@ -734,28 +793,25 @@ export const ScannerView: React.FC = () => {
                   </button>
 
                   <div className="flex items-center gap-2">
-                    {/* Manual Open (فتح يدوي) Button to bypass filters and open immediately */}
+                    {/* Automatic Bot Execution Status */}
                     {(() => {
                       const pIds: PortfolioId[] = ['PORTFOLIO_A', 'PORTFOLIO_B', 'PORTFOLIO_C'];
                       const isOpenInActive = pIds.some((pid) =>
                         portfolios[pid]?.trades?.some((t) => t.symbol === item.symbol && t.status === 'OPEN')
                       );
-                      const isOpening = openingSymbol === item.symbol;
 
                       return (
-                        <button
-                          onClick={(e) => handleManualOpenTrade(item.symbol, e)}
-                          disabled={isOpenInActive || isOpening}
-                          className={`px-2.5 py-1 rounded-lg text-[10px] font-bold flex items-center gap-1 transition active:scale-95 ${
+                        <span
+                          className={`px-2 py-1 rounded-lg text-[10px] font-bold flex items-center gap-1 font-sans ${
                             isOpenInActive
-                              ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 cursor-default'
-                              : 'bg-emerald-500 hover:bg-emerald-400 text-black shadow-sm font-extrabold'
+                              ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/40'
+                              : 'bg-slate-800/80 text-slate-400 border border-slate-700/60'
                           }`}
-                          title="فتح الصفقة فوراً في المحافظ الثلاث وتجاوز فلاتر البوت لتظهر في صفحة نشطة"
+                          title="النظام يفتح الصفقات آلياً 100% في المحافظ الثلاث بمجرد تحقق الشروط"
                         >
-                          <Zap className={`w-3 h-3 ${isOpening ? 'animate-bounce' : ''}`} />
-                          <span>{isOpenInActive ? 'مفتوحة في نشطة ✓' : isOpening ? 'جارٍ الفتح...' : 'فتح يدوي'}</span>
-                        </button>
+                          <Zap className="w-3 h-3 text-emerald-400" />
+                          <span>{isOpenInActive ? 'مفتوحة آلياً ✓' : 'تنفيذ آلي 100%'}</span>
+                        </span>
                       );
                     })()}
 

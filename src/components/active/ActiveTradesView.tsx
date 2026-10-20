@@ -35,7 +35,6 @@ export const ActiveTradesView: React.FC = () => {
   } = useCryptoStore();
 
   const [selectedPid, setSelectedPid] = useState<PortfolioId | 'ALL'>('ALL');
-  const [closingId, setClosingId] = useState<string | null>(null);
 
   // Get all active OPEN trades across selected portfolio(s)
   const openTrades = useMemo(() => {
@@ -111,13 +110,6 @@ export const ActiveTradesView: React.FC = () => {
       };
     });
   }, [portfolios]);
-
-  const handleManualClose = (trade: PaperTrade) => {
-    setClosingId(trade.id);
-    const livePrice = tickers[trade.symbol]?.lastPrice || trade.currentPrice;
-    closePaperTradeManually(trade.id, livePrice);
-    setTimeout(() => setClosingId(null), 500);
-  };
 
   const handleOpenChart = (symbol: string) => {
     setSelectedSymbol(symbol);
@@ -316,6 +308,21 @@ export const ActiveTradesView: React.FC = () => {
                           <span className={`px-2 py-0.5 rounded text-[10px] font-bold font-num ${typeInfo.badgeClass}`}>
                             {typeInfo.label}
                           </span>
+                          {/* Top-Down Daily & Weekly Macro Trend Badge */}
+                          {trade.macroTrend && (
+                            <span
+                              className={`px-2 py-0.5 rounded text-[10px] font-bold font-num ${
+                                trade.macroTrend === 'BULLISH'
+                                  ? 'bg-emerald-500/15 text-emerald-300 border border-emerald-500/30'
+                                  : trade.macroTrend === 'BEARISH'
+                                  ? 'bg-rose-500/15 text-rose-300 border border-rose-500/30'
+                                  : 'bg-amber-500/15 text-amber-300 border border-amber-500/30'
+                              }`}
+                              title={trade.macroTrendSummaryArabic || 'اتجاه الفريمات الكبيرة 1D و 1W'}
+                            >
+                              {trade.macroTrendLabel || (trade.macroTrend === 'BULLISH' ? 'Daily & Weekly صاعد 🟢' : 'Daily & Weekly هابط 🔴')}
+                            </span>
+                          )}
                           <span className="text-[10px] px-2 py-0.5 rounded bg-slate-800/80 text-slate-300 border border-slate-700/60 font-num">
                             {portfolioName}
                           </span>
@@ -435,14 +442,10 @@ export const ActiveTradesView: React.FC = () => {
                   </div>
 
                   <div className="flex items-center gap-2">
-                    <button
-                      onClick={() => handleManualClose(trade)}
-                      disabled={closingId === trade.id}
-                      className="px-3 py-1 rounded-lg bg-red-500/10 hover:bg-red-500/25 border border-red-500/30 text-red-400 text-[11px] font-bold transition flex items-center gap-1 active:scale-95 disabled:opacity-50"
-                    >
-                      <XCircle className="w-3 h-3" />
-                      <span>{closingId === trade.id ? 'جارٍ الإغلاق...' : 'إغلاق فوري'}</span>
-                    </button>
+                    <span className="px-2.5 py-1 rounded-lg bg-emerald-500/10 border border-emerald-500/25 text-emerald-400 text-[11px] font-bold flex items-center gap-1.5 font-sans">
+                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                      <span>إغلاق آلي 100% (TP/SL)</span>
+                    </span>
                   </div>
                 </div>
               </div>

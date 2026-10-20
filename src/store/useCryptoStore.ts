@@ -703,9 +703,25 @@ export const useCryptoStore = create<CryptoState>()(
           return false;
         }
 
+        const side = analysis.overallDirection === 'BULLISH' ? 'LONG' : 'SHORT';
+
+        // 3.5 Top-Down Macro Trend Filter (1D & 1W Rule):
+        // - افحص فريم اليومي (1D) والأسبوعي (1W) للعملة قبل فتح الصفقة
+        // - إذا كان 1D و 1W صاعدين: يُسمح فقط بصفقات Long
+        // - إذا كان 1D و 1W هابطين: يُسمح فقط بصفقات Short
+        // - إذا كانا متضاربين: يُرفض فتح الصفقة
+        if (analysis.macroTrend === 'CONFLICTING') {
+          return false;
+        }
+        if (side === 'LONG' && analysis.macroTrend !== 'BULLISH') {
+          return false;
+        }
+        if (side === 'SHORT' && analysis.macroTrend !== 'BEARISH') {
+          return false;
+        }
+
         // 4. Live Real-Time Price from WebSocket
         const livePrice = tickers[analysis.symbol]?.lastPrice || analysis.currentPrice || analysis.targets.entry;
-        const side = analysis.overallDirection === 'BULLISH' ? 'LONG' : 'SHORT';
 
         // Auto-resume from news pause if 15 minutes expired
         let effectiveNewsPaused = isNewsPaused;
@@ -720,6 +736,8 @@ export const useCryptoStore = create<CryptoState>()(
         const executedPortfolios: string[] = [];
         let anyExpired = false;
         let lastCreatedTrade: PaperTrade | null = null;
+        let portfolioARejectedDueToLiq = false;
+        let portfolioARejectionReason = '';
 
         pIds.forEach((pid) => {
           const p = portfolios[pid];
@@ -743,7 +761,13 @@ export const useCryptoStore = create<CryptoState>()(
             timeframe
           );
 
-          if (!check.allowed) return;
+          if (!check.allowed) {
+            if (pid === 'PORTFOLIO_A' && (check.reason?.includes('حماية التصفية') || slDist > cfg.liquidationDistancePercent)) {
+              portfolioARejectedDueToLiq = true;
+              portfolioARejectionReason = check.reason || `مسافة الوقف (${slDist.toFixed(1)}%) أكبر من مسافة التصفية (${cfg.liquidationDistancePercent.toFixed(1)}%) للمحفظة A`;
+            }
+            return;
+          }
 
           // Create trade using real live price and check 0.5% slippage
           const newTrade = createPaperTradeForPortfolio(analysis, pid, timeframe, livePrice);
@@ -812,6 +836,20 @@ export const useCryptoStore = create<CryptoState>()(
           };
         });
 
+        if (portfolioARejectedDueToLiq) {
+          const currentSig = get().signalCache[analysis.symbol] || analysis;
+          set((s) => ({
+            signalCache: {
+              ...s.signalCache,
+              [analysis.symbol]: {
+                ...currentSig,
+                portfolioARejected: true,
+                portfolioARejectionReason,
+              },
+            },
+          }));
+        }
+
         if (executedPortfolios.length > 0) {
           const activePid = getActivePid(get().activePortfolioId);
           set({
@@ -823,9 +861,10 @@ export const useCryptoStore = create<CryptoState>()(
 
           if (lastCreatedTrade) {
             const t = lastCreatedTrade as PaperTrade;
+            const liqNote = portfolioARejectedDueToLiq ? ' • ⚠️ تم تجاوز المحفظة A (حماية التصفية)' : '';
             sendTradingNotification(
               `دخول حقيقي في المحافظ [${executedPortfolios.join(', ')}]: ${analysis.symbol} ⚡`,
-              `سعر الإشارة: ${formatPrice(t.signalPrice)} | سعر الدخول الفعلي: ${formatPrice(t.actualEntryPrice)} • ${t.slCalculationReason || 'SL: ATR × 1.5'}`,
+              `سعر الإشارة: ${formatPrice(t.signalPrice)} | سعر الدخول الفعلي: ${formatPrice(t.actualEntryPrice)} • ${t.slCalculationReason || 'SL: ATR × 1.5'}${liqNote}`,
               soundEnabled
             );
           }
@@ -894,6 +933,9 @@ export const useCryptoStore = create<CryptoState>()(
                 tradeType: updatedTrade.tradeType,
                 tradeTypeLabel: updatedTrade.tradeTypeLabel,
                 tradeTypeLabelArabic: updatedTrade.tradeTypeLabelArabic,
+                macroTrend: updatedTrade.macroTrend,
+                macroTrendLabel: updatedTrade.macroTrendLabel,
+                macroTrendSummaryArabic: updatedTrade.macroTrendSummaryArabic,
                 entryPrice: updatedTrade.actualEntryPrice,
                 exitPrice: stage === 'TP1' ? updatedTrade.tp1 : updatedTrade.tp2,
                 netPnl: partialPnL,
@@ -943,6 +985,9 @@ export const useCryptoStore = create<CryptoState>()(
                 tradeType: updatedTrade.tradeType,
                 tradeTypeLabel: updatedTrade.tradeTypeLabel,
                 tradeTypeLabelArabic: updatedTrade.tradeTypeLabelArabic,
+                macroTrend: updatedTrade.macroTrend,
+                macroTrendLabel: updatedTrade.macroTrendLabel,
+                macroTrendSummaryArabic: updatedTrade.macroTrendSummaryArabic,
                 entryPrice: updatedTrade.actualEntryPrice,
                 exitPrice: updatedTrade.exitPrice || livePrice,
                 netPnl: updatedTrade.netPnl,

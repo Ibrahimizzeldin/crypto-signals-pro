@@ -1,9 +1,9 @@
 import React from 'react';
 import { useCryptoStore } from '../../store/useCryptoStore';
-import { Activity, Volume2, VolumeX, Wifi, WifiOff } from 'lucide-react';
+import { Activity, Volume2, VolumeX, Settings } from 'lucide-react';
 
 export const Header: React.FC = () => {
-  const { wsConnected, fearAndGreed, soundEnabled, setSoundEnabled } = useCryptoStore();
+  const { wsConnected, fearAndGreed, soundEnabled, setSoundEnabled, activeTab, setActiveTab } = useCryptoStore();
 
   const getFngColor = (val: number) => {
     if (val >= 60) return 'text-emerald-400 bg-emerald-500/10 border-emerald-500/20';
@@ -82,6 +82,19 @@ export const Header: React.FC = () => {
             title={soundEnabled ? 'كتم التنبيهات الصوتية' : 'تفعيل التنبيهات الصوتية'}
           >
             {soundEnabled ? <Volume2 className="w-3.5 h-3.5" /> : <VolumeX className="w-3.5 h-3.5" />}
+          </button>
+
+          {/* Settings / Factory Reset Button */}
+          <button
+            onClick={() => setActiveTab('settings')}
+            className={`p-1.5 rounded-lg border transition ${
+              activeTab === 'settings'
+                ? 'bg-sky-500/20 border-sky-500/50 text-sky-400 shadow-sm'
+                : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-white'
+            }`}
+            title="الإعدادات وإعادة ضبط المصنع"
+          >
+            <Settings className="w-3.5 h-3.5" />
           </button>
         </div>
       </div>

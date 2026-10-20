@@ -143,6 +143,8 @@ export interface MultiTimeframeAnalysis {
   macroTrend?: 'BULLISH' | 'BEARISH' | 'CONFLICTING';
   macroTrendLabel?: string;
   macroTrendSummaryArabic?: string;
+  portfolioARejected?: boolean;
+  portfolioARejectionReason?: string;
   timestamp: number;
 }
 

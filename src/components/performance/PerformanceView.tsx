@@ -45,7 +45,7 @@ export const PerformanceView: React.FC = () => {
   } = useCryptoStore();
 
   const [patternFilter, setPatternFilter] = useState<'ALL' | SetupPattern>('ALL');
-  const [outcomeFilter, setOutcomeFilter] = useState<'ALL' | 'WIN' | 'LOSS' | 'LIQUIDATED'>('ALL');
+  const [outcomeFilter, setOutcomeFilter] = useState<'ALL' | 'WIN' | 'LOSS' | 'LIQUIDATED' | 'TP1' | 'TP2' | 'TP3' | 'SL'>('ALL');
   const [confirmClearOpen, setConfirmClearOpen] = useState(false);
   const [actionMessage, setActionMessage] = useState<string | null>(null);
 
@@ -196,6 +196,10 @@ export const PerformanceView: React.FC = () => {
       if (outcomeFilter === 'WIN' && t.netPnl <= 0) return false;
       if (outcomeFilter === 'LOSS' && (t.netPnl >= 0 || t.closeReason === 'LIQUIDATED')) return false;
       if (outcomeFilter === 'LIQUIDATED' && t.closeReason !== 'LIQUIDATED') return false;
+      if (outcomeFilter === 'TP1' && t.closeReason !== 'TP1') return false;
+      if (outcomeFilter === 'TP2' && t.closeReason !== 'TP2') return false;
+      if (outcomeFilter === 'TP3' && t.closeReason !== 'TP3') return false;
+      if (outcomeFilter === 'SL' && t.closeReason !== 'SL') return false;
       return true;
     });
   }, [displayedTrades, patternFilter, outcomeFilter]);
@@ -1196,12 +1200,10 @@ export const PerformanceView: React.FC = () => {
                     <span className="text-[10px] text-slate-400">
                       الرافعة: {t.leverage}x • تصفية عند {t.liquidationDistancePercent}%
                     </span>
-                    <button
-                      onClick={() => closePaperTradeManually(t.id)}
-                      className="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white text-[10px] font-bold transition border border-slate-700"
-                    >
-                      إغلاق يدوي الآن
-                    </button>
+                    <span className="px-2 py-0.5 rounded-lg bg-emerald-500/10 border border-emerald-500/25 text-emerald-400 text-[10px] font-bold flex items-center gap-1 font-sans">
+                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                      <span>إغلاق آلي 100% (TP/SL)</span>
+                    </span>
                   </div>
                 </div>
               );
@@ -1269,41 +1271,37 @@ export const PerformanceView: React.FC = () => {
             </h3>
           </div>
 
-          {/* Outcome Filter */}
-          <div className="flex items-center gap-1.5 text-[11px]">
-            <Filter className="w-3.5 h-3.5 text-slate-500" />
-            <button
-              onClick={() => setOutcomeFilter('ALL')}
-              className={`px-2 py-1 rounded-lg font-bold transition ${
-                outcomeFilter === 'ALL' ? 'bg-sky-600 text-white' : 'text-slate-400 hover:bg-slate-800'
-              }`}
-            >
-              الكل
-            </button>
-            <button
-              onClick={() => setOutcomeFilter('WIN')}
-              className={`px-2 py-1 rounded-lg font-bold transition ${
-                outcomeFilter === 'WIN' ? 'bg-emerald-600 text-white' : 'text-slate-400 hover:bg-slate-800'
-              }`}
-            >
-              الرابحة
-            </button>
-            <button
-              onClick={() => setOutcomeFilter('LOSS')}
-              className={`px-2 py-1 rounded-lg font-bold transition ${
-                outcomeFilter === 'LOSS' ? 'bg-slate-700 text-white' : 'text-slate-400 hover:bg-slate-800'
-              }`}
-            >
-              الخاسرة
-            </button>
-            <button
-              onClick={() => setOutcomeFilter('LIQUIDATED')}
-              className={`px-2 py-1 rounded-lg font-bold transition ${
-                outcomeFilter === 'LIQUIDATED' ? 'bg-rose-600 text-white' : 'text-slate-400 hover:bg-slate-800'
-              }`}
-            >
-              المتصفاة 🚨
-            </button>
+          {/* Prompt Requirement: Horizontal Scrollable Chips (السجل: رابحة/خاسرة/السبب) */}
+          <div className="flex items-center gap-1.5 overflow-x-auto pb-1 no-scrollbar text-xs max-w-full">
+            <span className="text-[11px] text-slate-400 font-bold shrink-0 ml-1">تصفية:</span>
+            {[
+              { id: 'ALL', label: 'الكل' },
+              { id: 'WIN', label: 'الرابحة 🟢' },
+              { id: 'LOSS', label: 'الخاسرة 🔴' },
+              { id: 'TP1', label: 'السبب: هدف 1 (TP1)' },
+              { id: 'TP2', label: 'السبب: هدف 2 (TP2)' },
+              { id: 'TP3', label: 'السبب: هدف 3 (TP3)' },
+              { id: 'SL', label: 'السبب: وقف خسارة (SL)' },
+              { id: 'LIQUIDATED', label: 'السبب: تصفية 🚨' },
+            ].map((chip) => (
+              <button
+                key={chip.id}
+                onClick={() => setOutcomeFilter(chip.id as any)}
+                className={`px-2.5 py-1 text-xs rounded-xl font-bold whitespace-nowrap transition border ${
+                  outcomeFilter === chip.id
+                    ? chip.id === 'WIN' || chip.id === 'TP1' || chip.id === 'TP2' || chip.id === 'TP3'
+                      ? 'bg-emerald-600 text-white border-emerald-500 shadow-sm'
+                      : chip.id === 'LOSS' || chip.id === 'SL'
+                      ? 'bg-slate-700 text-white border-slate-600 shadow-sm'
+                      : chip.id === 'LIQUIDATED'
+                      ? 'bg-rose-600 text-white border-rose-500 shadow-sm'
+                      : 'bg-sky-600 text-white border-sky-500 shadow-sm'
+                    : 'bg-slate-900 text-slate-400 border-slate-800 hover:text-white'
+                }`}
+              >
+                {chip.label}
+              </button>
+            ))}
           </div>
         </div>
 
