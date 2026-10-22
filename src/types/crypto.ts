@@ -145,6 +145,7 @@ export interface MultiTimeframeAnalysis {
   macroTrendSummaryArabic?: string;
   portfolioARejected?: boolean;
   portfolioARejectionReason?: string;
+  rejectionReason?: string;
   timestamp: number;
 }
 

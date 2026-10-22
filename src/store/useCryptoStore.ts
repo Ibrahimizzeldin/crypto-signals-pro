@@ -410,11 +410,11 @@ export const useCryptoStore = create<CryptoState>()(
           timestamp: Date.now(),
         };
 
-        // Strategy routing based on signal characteristics
+        // Strategy routing based on signal characteristics (Trading Lab Rule)
         let targetStrategies: StrategyId[] = [];
-        if (timeframe === '5m' || timeframe === '1m' || timeframe === '15m') {
+        if (timeframe === '5m' || timeframe === '1m') {
           targetStrategies = ['STRATEGY_SCALP'];
-        } else if ((pattern && pattern.toLowerCase().includes('breakout')) || typeInfo.label.includes('اختراق')) {
+        } else if (pattern === 'BREAKOUT' || (pattern && pattern.toLowerCase().includes('breakout')) || typeInfo.label.includes('اختراق')) {
           targetStrategies = ['STRATEGY_TREND'];
         } else {
           targetStrategies = ['STRATEGY_REVERSION'];
@@ -683,52 +683,70 @@ export const useCryptoStore = create<CryptoState>()(
       },
 
       /**
-       * Evaluates signal and executes it across ALL 3 PARALLEL PORTFOLIOS simultaneously
+       * Evaluates signal and executes it into designated strategy
        * Criteria:
-       * - Total Score >= 70: Instant Execution (Market entry)
+       * - Total Score >= 70: Instant Execution (Market entry) - forced execution!
        * - Total Score 55-69: Pending Watch (Limit order at entry)
        * - Total Score < 55: Ignore
        */
       evaluateAndExecuteSignal: (analysis, timeframe = '15m') => {
-        const { portfolios, marketRegime, isNewsPaused, soundEnabled, tickers } = get();
+        const { portfolios, marketRegime, isNewsPaused, soundEnabled, tickers, signalCache } = get();
 
-        // 1. Strict verification: only verified Crypto Futures contracts
-        if (!isCryptoFuturesSymbol(analysis.symbol)) {
-          return false;
-        }
-
-        // 2. Reject losing patterns
-        if ((analysis.setupPattern as string) === 'REVERSAL') {
-          return false;
-        }
-
-        // 3. Reject coins with low strength
-        const projectStrength = getProjectStrengthScore(analysis.symbol);
-        if (projectStrength.totalScore < 50) {
-          return false;
-        }
-
+        // 1. Live Real-Time Price from WebSocket
+        const livePrice = tickers[analysis.symbol]?.lastPrice || analysis.currentPrice || analysis.targets.entry;
         const score = analysis.scoreBreakdown?.totalScore ?? analysis.confidence;
-        if (score < 55) {
+        const isInstantExecution = (analysis.executionStatus === 'READY_NOW') || score >= 70;
+
+        const recordRejection = (reason: string) => {
+          console.warn(`[Trade Engine] محاولة فتح صفقة ${analysis.symbol}، السعر: $${livePrice}، النتيجة: مرفوضة بسبب ${reason}`);
+          const updatedAnalysis: MultiTimeframeAnalysis = {
+            ...analysis,
+            rejectionReason: reason,
+          };
+          set({
+            signalCache: {
+              ...signalCache,
+              [analysis.symbol]: updatedAnalysis,
+            },
+          });
           return false;
+        };
+
+        // 2. Strict verification: only verified Crypto Futures contracts
+        if (!isCryptoFuturesSymbol(analysis.symbol)) {
+          return recordRejection('رمز غير مدعوم في عقود بينانس الآجلة الرسمية (USDT-M)');
+        }
+
+        // 3. Reject losing patterns
+        if ((analysis.setupPattern as string) === 'REVERSAL') {
+          return recordRejection('نمط انعكاسي عالي المخاطر (REVERSAL)');
+        }
+
+        // 4. Secondary filters (Bypassed if Instant Execution score >= 70)
+        if (!isInstantExecution) {
+          const projectStrength = getProjectStrengthScore(analysis.symbol);
+          if (projectStrength.totalScore < 50) {
+            return recordRejection(`قوة المشروع منخفضة (${projectStrength.totalScore}/100)`);
+          }
+
+          if (score < 55) {
+            return recordRejection(`نقاط الإشارة منخفضة (${score}/100) دون الحد الأدنى 55`);
+          }
+
+          // 4H Trend Filter
+          const tf4h = analysis.timeframeResults?.['4h'];
+          const sideCheck = analysis.overallDirection === 'BULLISH' ? 'LONG' : 'SHORT';
+          if (tf4h) {
+            if (sideCheck === 'LONG' && tf4h.direction === 'هابط' && tf4h.strength === 'عالية') {
+              return recordRejection('فريم 4H يعاكس الاتجاه الصاعد بقوة عالية');
+            }
+            if (sideCheck === 'SHORT' && tf4h.direction === 'صاعد' && tf4h.strength === 'عالية') {
+              return recordRejection('فريم 4H يعاكس الاتجاه الهابط بقوة عالية');
+            }
+          }
         }
 
         const side = analysis.overallDirection === 'BULLISH' ? 'LONG' : 'SHORT';
-
-        // 4. 4H Trend Filter (Trading Lab Rule: Replaces strict 1D & 1W blocking filters):
-        // Rejects only if 4H is strongly opposing the trade direction
-        const tf4h = analysis.timeframeResults?.['4h'];
-        if (tf4h) {
-          if (side === 'LONG' && tf4h.direction === 'هابط' && tf4h.strength === 'عالية') {
-            return false;
-          }
-          if (side === 'SHORT' && tf4h.direction === 'صاعد' && tf4h.strength === 'عالية') {
-            return false;
-          }
-        }
-
-        // 5. Live Real-Time Price from WebSocket
-        const livePrice = tickers[analysis.symbol]?.lastPrice || analysis.currentPrice || analysis.targets.entry;
 
         // Auto-resume from news pause if 15 minutes expired
         let effectiveNewsPaused = isNewsPaused;
@@ -738,12 +756,12 @@ export const useCryptoStore = create<CryptoState>()(
           effectiveNewsPaused = false;
         }
 
-        // 6. Strategy Routing Logic (Trading Lab Rule 3):
-        // * Strategy 1: Trend Following (Breakouts)
-        // * Strategy 2: Mean Reversion (Retest / Range)
-        // * Strategy 3: Scalping (5m / 1m)
+        // 5. Strategy Routing Logic (Trading Lab Rule):
+        // * Breakout -> Strategy 1: Trend Following
+        // * Retest / Pullback / Range -> Strategy 2: Mean Reversion
+        // * 5m / 1m -> Strategy 3: Scalping
         let targetStrategyId: PortfolioId = 'STRATEGY_TREND';
-        if (timeframe === '5m' || timeframe === '1m' || analysis.tradeType === 'SCALP') {
+        if (timeframe === '5m' || timeframe === '1m') {
           targetStrategyId = 'STRATEGY_SCALP';
         } else if (analysis.setupPattern === 'BREAKOUT') {
           targetStrategyId = 'STRATEGY_TREND';
@@ -752,7 +770,7 @@ export const useCryptoStore = create<CryptoState>()(
         }
 
         const p = portfolios[targetStrategyId];
-        if (!p) return false;
+        if (!p) return recordRejection('استراتيجية غير متوفرة');
         const cfg = PORTFOLIO_CONFIGS[targetStrategyId];
         const slDist = Math.abs(analysis.targets.slPercent);
 
@@ -774,7 +792,7 @@ export const useCryptoStore = create<CryptoState>()(
         );
 
         if (!check.allowed) {
-          return false;
+          return recordRejection(check.reason || 'تم رفض الصفقة بواسطة محرك إدارة المخاطر');
         }
 
         // Create trade for target strategy
@@ -787,8 +805,11 @@ export const useCryptoStore = create<CryptoState>()(
             trades: [newTrade, ...p.trades],
           };
           set({ portfolios: updatedPortfolios });
-          return false;
+          return recordRejection(newTrade.notes || 'انتهت صلاحية أمر الدخول بسبب فارق السعر');
         }
+
+        // Diagnostic log: Trade Opened Successfully!
+        console.log(`[Trade Engine] محاولة فتح صفقة ${analysis.symbol}، السعر: $${livePrice}، النتيجة: تم الفتح بنجاح في [${cfg.shortName}]`);
 
         // Fixed 25x, 1% risk per trade commission: $0.10 round trip for 250 position size
         const newBalance = Math.max(0, Number((p.account.balance - 0.10).toFixed(2)));
@@ -840,11 +861,22 @@ export const useCryptoStore = create<CryptoState>()(
         };
 
         const activePid = getActivePid(get().activePortfolioId);
+
+        // Clear rejectionReason on success
+        const updatedSignalCache = { ...signalCache };
+        if (updatedSignalCache[analysis.symbol]) {
+          updatedSignalCache[analysis.symbol] = {
+            ...updatedSignalCache[analysis.symbol],
+            rejectionReason: undefined,
+          };
+        }
+
         set({
           portfolios: updatedPortfolios,
           paperTrades: updatedPortfolios[activePid].trades,
           paperAccount: updatedPortfolios[activePid].account,
           equityHistory: updatedPortfolios[activePid].equityHistory,
+          signalCache: updatedSignalCache,
         });
 
         sendTradingNotification(

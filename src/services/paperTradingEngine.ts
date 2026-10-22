@@ -297,8 +297,9 @@ export function canOpenNewTrade(
     return { allowed: false, reason: 'تم تعليق الصفقات مؤقتاً بسبب أخبار عاجلة عالية التأثير (حتى 15 دقيقة)' };
   }
 
-  // 4. Check Market Regime
-  if (marketRegime) {
+  // 4. Check Market Regime (Bypassed if Instant Execution score >= 70)
+  const isInstant = signalScore >= 70;
+  if (marketRegime && !isInstant) {
     if (marketRegime.regime === 'VOLATILE' || marketRegime.allowedTradeSides === 'HALTED') {
       return { allowed: false, reason: 'توقف مؤقت للصفقات بسبب تقلب حاد في السوق (Volatile)' };
     }
@@ -327,28 +328,20 @@ export function canOpenNewTrade(
     (t) => (t.status === 'OPEN' || t.status === 'PENDING') && t.symbol === symbol
   );
   if (existingOnSymbol) {
-    return { allowed: false, reason: `توجد صفقة مفتوحة بالفعل لعملة ${symbol} في هذه المحفظة` };
+    return { allowed: false, reason: `توجد صفقة مفتوحة بالفعل لعملة ${symbol} في هذه الاستراتيجية` };
   }
 
-  // 8. Liquidation Protection Check (حماية التصفية):
-  // ارفض الصفقة في المحفظة التي يكون فيها مسافة SL أكبر من مسافة التصفية
-  if (portfolioId && targetSlPercent && targetSlPercent > 0) {
-    const cfg = PORTFOLIO_CONFIGS[portfolioId];
-    if (targetSlPercent > cfg.liquidationDistancePercent) {
-      return {
-        allowed: false,
-        reason: `حماية التصفية (${cfg.shortName}): مسافة وقف الخسارة (${targetSlPercent.toFixed(1)}%) أكبر من مسافة التصفية للرافعة (${cfg.liquidationDistancePercent.toFixed(1)}%) - تم رفض الصفقة لحماية المحفظة`,
-      };
-    }
-  }
+  // 8. Liquidation Protection Check:
+  // إلغاء الرفض تماماً في Cross Margin، مع ضبط الحجم تلقائياً داخل createPaperTradeForPortfolio
 
-  // 9. Margin Check (Rule: إذا وصل رصيد محفظة لأقل من الهامش المطلوب، توقف عن فتح صفقات جديدة فيها)
+  // 9. Margin Check:
   const marginUsed = openTrades.reduce((acc, t) => acc + t.margin, 0);
   const availableBalance = Math.max(0, account.balance - marginUsed);
-  if (availableBalance < marginRequired) {
+  const minRequiredMargin = Math.min(marginRequired, 5); // حد أدنى مرن 5 USDT
+  if (availableBalance < minRequiredMargin) {
     return {
       allowed: false,
-      reason: `الرصيد المتاح ($${availableBalance.toFixed(2)}) أقل من الهامش المطلوب ($${marginRequired})`,
+      reason: `الرصيد المتاح ($${availableBalance.toFixed(2)}) غير كافٍ لفتح صفقة جديدة (المطلوب: $${minRequiredMargin})`,
     };
   }
 
@@ -385,15 +378,14 @@ export function createPaperTradeForPortfolio(
   // Execute immediately at market live price without expiration!
   const priceDiffPercent = signalPrice > 0 ? Number(((Math.abs(livePrice - signalPrice) / signalPrice) * 100).toFixed(2)) : 0;
   const isInstantExecution = isReadyNow || (analysis.scoreBreakdown?.totalScore ?? analysis.confidence) >= 70;
-  const hasExpired = !isInstantExecution && priceDiffPercent > 0.5;
+  // Widen price tolerance from 0.2% to 1.5% for pending signals, and NEVER expire instant execution signals
+  const hasExpired = !isInstantExecution && priceDiffPercent > 1.5;
 
   let actualEntryPrice = roundDec(livePrice);
-  const status: PaperTradeStatus = hasExpired ? 'EXPIRED' : (isInstantExecution ? 'OPEN' : 'PENDING');
+  const status: PaperTradeStatus = isInstantExecution ? 'OPEN' : (hasExpired ? 'EXPIRED' : 'PENDING');
   const closeReason: PaperCloseReason | undefined = hasExpired ? 'EXPIRED' : undefined;
 
-  // 3. If diff <= 0.5%:
-  // * افتح الصفقة بالسعر الحقيقي الحالي.
-  // * أعد حساب SL و TP1/TP2/TP3 بناءً على سعر الدخول الجديد (بنفس النسب المئوية).
+  // 3. Dynamic recalculation of TP1/TP2/TP3 and SL based on actual live entry price
   const tp1Percent = analysis.targets.tp1Percent;
   const tp2Percent = analysis.targets.tp2Percent;
   const tp3Percent = analysis.targets.tp3Percent;
@@ -420,16 +412,24 @@ export function createPaperTradeForPortfolio(
 
   // 4. Calculate stop-loss distance %
   const slDistPercent = actualEntryPrice > 0 ? Number((Math.abs((actualEntryPrice - sl) / actualEntryPrice) * 100).toFixed(2)) : Math.abs(slPercent);
-  const isLargeTimeframe = timeframe === '4h' || timeframe === '1d' || timeframe === '3d' || timeframe === '1w';
 
-  // 5. Fixed 25x Leverage and 1% Risk sizing (Trading Lab rule)
-  const allocatedMargin = config.marginPerTrade || 10;
+  // 5. Auto-size adjustment (Bypass Liquidation Filter):
+  // Instead of rejecting if SL > 4.0%, scale down position size automatically to remain safe in Cross Margin
   const effectiveLeverage = 25; // Fixed 25x
-  const positionSize = config.positionSize || (allocatedMargin * effectiveLeverage); // 250 USDT
-  const isLiquidationProtected = false;
+  let basePositionSize = config.positionSize || 250; // default 250 USDT
+  let allocatedMargin = config.marginPerTrade || 10;
+  let isLiquidationProtected = false;
 
-  // Multi-Timeframe trade categorization
-  const typeInfo = getTradeTypeInfo(timeframe || analysis.timeframe || '15m');
+  if (slDistPercent > 4.0) {
+    const scaleFactor = Math.max(0.35, 4.0 / slDistPercent);
+    basePositionSize = Math.max(75, Math.round(basePositionSize * scaleFactor));
+    allocatedMargin = Math.max(3, Math.round((basePositionSize / effectiveLeverage) * 100) / 100);
+    isLiquidationProtected = true;
+  }
+  const positionSize = basePositionSize;
+
+  // Multi-Timeframe trade categorization (with pattern routing)
+  const typeInfo = getTradeTypeInfo(timeframe || analysis.timeframe || '15m', analysis.setupPattern);
 
   // Commission $0.10 for 250 USDT position size (0.04% round trip) only if trade actually opens
   const commissionPaid = hasExpired ? 0 : 0.10;
@@ -441,11 +441,11 @@ export function createPaperTradeForPortfolio(
   const slCalculationReason = analysis.targets.slCalculationReason || 'SL محسوب من: ATR × 1.5';
 
   const liqNote = isLiquidationProtected
-    ? ` • 🛡️ درع حماية التصفية: تم تعديل الحجم إلى $${positionSize} (رافعة ${effectiveLeverage}x) لتأمين مسافة تصفية ${(100 / effectiveLeverage).toFixed(1)}% تتجاوز الوقف (${slDistPercent.toFixed(1)}%)`
+    ? ` • 🛡️ تعديل الحجم تلقائياً إلى $${positionSize} (هامش $${allocatedMargin}) لتأمين وقف الخسارة (${slDistPercent.toFixed(1)}%) في Cross Margin`
     : '';
 
   const notes = hasExpired
-    ? `فاتت الصفقة (Expired): فارق السعر (${priceDiffPercent}% > 0.5%) بين الإشارة (${formatPrice(signalPrice)}) والحقيقي (${formatPrice(livePrice)})`
+    ? `فاتت الصفقة (Expired): فارق السعر (${priceDiffPercent}% > 1.5%) بين الإشارة (${formatPrice(signalPrice)}) والحقيقي (${formatPrice(livePrice)})`
     : `${analysis.patternNameArabic} • ${typeInfo.label} • ${slCalculationReason} • سعر الإشارة: ${formatPrice(signalPrice)} | سعر الدخول الفعلي: ${formatPrice(actualEntryPrice)}${liqNote}`;
 
   return {

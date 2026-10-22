@@ -44,6 +44,7 @@ export const ScannerView: React.FC<ScannerViewProps> = ({ scannerId = 1 }) => {
     setDetailModalOpen,
     portfolios,
     marketRegime,
+    openTradeManually,
   } = useCryptoStore();
 
   // Filters & Sorting state - 'STRONG_ONLY' (60+) is default
@@ -187,6 +188,7 @@ export const ScannerView: React.FC<ScannerViewProps> = ({ scannerId = 1 }) => {
             timeframe: cached.timeframe || (timeframeFilter !== 'ALL' ? timeframeFilter : '15m'),
             portfolioARejected: cached.portfolioARejected || false,
             portfolioARejectionReason: cached.portfolioARejectionReason,
+            rejectionReason: cached.rejectionReason,
           };
         }
 
@@ -239,6 +241,7 @@ export const ScannerView: React.FC<ScannerViewProps> = ({ scannerId = 1 }) => {
           btcRel: classifyBtcCorrelation(sym),
           timeframe: (timeframeFilter !== 'ALL' ? timeframeFilter : '15m'),
           portfolioARejected: false,
+          rejectionReason: signalCache[sym]?.rejectionReason,
         };
       })
       .filter((item) => {
@@ -322,6 +325,29 @@ export const ScannerView: React.FC<ScannerViewProps> = ({ scannerId = 1 }) => {
     strengthFilter,
     marketRegime,
   ]);
+
+  // Auto-open top instant execution signals (Score >= 70 / READY_NOW) into their respective strategies
+  useEffect(() => {
+    const readySignals = scannedItems.filter(
+      (item) => item.isReadyNow && item.totalScore >= 70 && !item.rejectionReason
+    );
+    if (readySignals.length === 0) return;
+
+    const openSymbols = new Set(
+      Object.values(portfolios).flatMap((p) => p.trades.filter((t) => t.status === 'OPEN').map((t) => t.symbol))
+    );
+
+    // Auto-open up to 3 top ready signals that are not already open
+    let opened = 0;
+    for (const item of readySignals) {
+      if (opened >= 3) break;
+      if (!openSymbols.has(item.symbol)) {
+        openTradeManually(item.symbol, item.timeframe);
+        openSymbols.add(item.symbol);
+        opened++;
+      }
+    }
+  }, [scannedItems.length, tickers]);
 
   return (
     <div className="flex flex-col gap-4 p-4 pb-28 max-w-2xl mx-auto w-full text-right font-['Cairo',sans-serif]">
@@ -696,9 +722,9 @@ export const ScannerView: React.FC<ScannerViewProps> = ({ scannerId = 1 }) => {
                       <span className="text-[10px] font-normal opacity-70">/100</span>
                     </div>
 
-                    {/* Multi-Timeframe Trade Type Badge: Scalp (15m) / Swing (1D) */}
+                    {/* Multi-Timeframe Trade Type Badge: Trend (Breakout) / Reversion (Retest) / Scalp */}
                     {(() => {
-                      const typeInfo = getTradeTypeInfo(item.timeframe || (timeframeFilter !== 'ALL' ? timeframeFilter : '15m'));
+                      const typeInfo = getTradeTypeInfo(item.timeframe || (timeframeFilter !== 'ALL' ? timeframeFilter : '15m'), item.setupPattern);
                       return (
                         <span
                           className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md border text-[10px] font-bold font-num ${typeInfo.badgeClass}`}
@@ -816,24 +842,45 @@ export const ScannerView: React.FC<ScannerViewProps> = ({ scannerId = 1 }) => {
                   </button>
 
                   <div className="flex items-center gap-2">
-                    {/* Automatic Bot Execution Status */}
+                    {/* Automatic Bot Execution Status or Instant Force Execution Button */}
                     {(() => {
                       const pIds: StrategyId[] = ['STRATEGY_TREND', 'STRATEGY_REVERSION', 'STRATEGY_SCALP'];
                       const isOpenInActive = pIds.some((pid) =>
                         portfolios[pid]?.trades?.some((t) => t.symbol === item.symbol && t.status === 'OPEN')
                       );
 
+                      if (isOpenInActive) {
+                        return (
+                          <span
+                            className="px-2 py-1 rounded-lg text-[10px] font-bold flex items-center gap-1 font-sans bg-emerald-500/20 text-emerald-400 border border-emerald-500/40"
+                            title="الصفقة مفتوحة حالياً ونشطة في محفظة التداول"
+                          >
+                            <Zap className="w-3 h-3 text-emerald-400 fill-emerald-400" />
+                            <span>مفتوحة آلياً ✓</span>
+                          </span>
+                        );
+                      }
+
+                      if (item.isReadyNow) {
+                        return (
+                          <button
+                            onClick={() => openTradeManually(item.symbol, item.timeframe)}
+                            className="px-2.5 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-[10px] font-black flex items-center gap-1 transition shadow-md shadow-emerald-950/40 animate-pulse"
+                            title="فتح الصفقة الآن فوراً في الاستراتيجية المخصصة لها دون انتظار"
+                          >
+                            <Zap className="w-3 h-3 text-white fill-white" />
+                            <span>تنفيذ فوري ⚡</span>
+                          </button>
+                        );
+                      }
+
                       return (
                         <span
-                          className={`px-2 py-1 rounded-lg text-[10px] font-bold flex items-center gap-1 font-sans ${
-                            isOpenInActive
-                              ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/40'
-                              : 'bg-slate-800/80 text-slate-400 border border-slate-700/60'
-                          }`}
-                          title="النظام يفتح الصفقات آلياً 100% في الاستراتيجيات الثلاث بمجرد تحقق الشروط"
+                          className="px-2 py-1 rounded-lg text-[10px] font-bold flex items-center gap-1 font-sans bg-slate-800/80 text-slate-400 border border-slate-700/60"
+                          title="النظام يفتح الصفقات آلياً بمجرد وصول النقاط إلى 70+"
                         >
-                          <Zap className="w-3 h-3 text-emerald-400" />
-                          <span>{isOpenInActive ? 'مفتوحة آلياً ✓' : 'تنفيذ آلي 100%'}</span>
+                          <Zap className="w-3 h-3 text-slate-400" />
+                          <span>تنفيذ آلي 100%</span>
                         </span>
                       );
                     })()}
@@ -858,6 +905,14 @@ export const ScannerView: React.FC<ScannerViewProps> = ({ scannerId = 1 }) => {
                     </button>
                   </div>
                 </div>
+
+                {/* Visual Rejection Banner (Requirement 5) */}
+                {item.rejectionReason && (
+                  <div className="mt-2.5 px-3 py-1.5 rounded-xl bg-rose-500/15 border border-rose-500/40 text-rose-300 text-[11px] font-bold flex items-center gap-2 text-right">
+                    <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0" />
+                    <span>⚠️ سبب عدم التنفيذ: {item.rejectionReason}</span>
+                  </div>
+                )}
 
                 {/* Expandable Breakdown Drawer (The 8 Dimensions of 100 Points) */}
                 {isExpanded && item.scoreBreakdown && (
