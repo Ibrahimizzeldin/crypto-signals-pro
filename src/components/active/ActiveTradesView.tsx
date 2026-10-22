@@ -1,7 +1,7 @@
 import React, { useState, useMemo } from 'react';
 import { useCryptoStore } from '../../store/useCryptoStore';
-import { PortfolioId, PaperTrade } from '../../types/crypto';
-import { PORTFOLIO_CONFIGS } from '../../services/paperTradingEngine';
+import { StrategyId, PaperTrade } from '../../types/crypto';
+import { STRATEGY_CONFIGS } from '../../services/paperTradingEngine';
 import { formatPrice } from '../../utils/formatters';
 import { CoinIcon } from '../common/CoinIcon';
 import { getPatternEmoji } from '../../utils/cryptoLogos';
@@ -25,42 +25,31 @@ import { getTradeTypeInfo } from '../../utils/tradeTypes';
 export const ActiveTradesView: React.FC = () => {
   const {
     portfolios,
-    activePortfolioId,
-    setActivePortfolioId,
     tickers,
     wsConnected,
-    closePaperTradeManually,
     setSelectedSymbol,
     setDetailModalOpen,
   } = useCryptoStore();
 
-  const [selectedPid, setSelectedPid] = useState<PortfolioId | 'ALL'>('ALL');
+  const [selectedStrategy, setSelectedStrategy] = useState<StrategyId>('STRATEGY_TREND');
 
-  // Get all active OPEN trades across selected portfolio(s)
+  // Get all active OPEN trades for the selected strategy
   const openTrades = useMemo(() => {
     const list: PaperTrade[] = [];
-    const pIds: PortfolioId[] = ['PORTFOLIO_A', 'PORTFOLIO_B', 'PORTFOLIO_C'];
+    const p = portfolios[selectedStrategy];
 
-    pIds.forEach((pid) => {
-      if (selectedPid === 'ALL' || selectedPid === pid) {
-        const p = portfolios[pid];
-        if (p?.trades) {
-          // Strictly open trades only!
-          p.trades.forEach((t) => {
-            if (t.status === 'OPEN') {
-              list.push(t);
-            }
-          });
+    if (p?.trades) {
+      p.trades.forEach((t) => {
+        if (t.status === 'OPEN') {
+          list.push(t);
         }
-      }
-    });
+      });
+    }
 
     // Smart Sorting:
     // Sort open trades descending:
     // Trades closest to TP1 or highest profit (PnL) at the TOP.
-    // Losing trades or trades that haven't moved at the BOTTOM.
     return list.sort((a, b) => {
-      // Calculate progress towards TP1 for trade A
       const entryA = a.actualEntryPrice || a.entryPrice;
       const curA = a.currentPrice || tickers[a.symbol]?.lastPrice || entryA;
       const tp1A = a.tp1;
@@ -71,7 +60,6 @@ export const ActiveTradesView: React.FC = () => {
         progressA = ((entryA - curA) / (entryA - tp1A)) * 100;
       }
 
-      // Calculate progress towards TP1 for trade B
       const entryB = b.actualEntryPrice || b.entryPrice;
       const curB = b.currentPrice || tickers[b.symbol]?.lastPrice || entryB;
       const tp1B = b.tp1;
@@ -82,26 +70,25 @@ export const ActiveTradesView: React.FC = () => {
         progressB = ((entryB - curB) / (entryB - tp1B)) * 100;
       }
 
-      // Combined ranking score: weight PnL and closeness to TP1
       const scoreA = (a.netPnl || 0) * 10 + progressA;
       const scoreB = (b.netPnl || 0) * 10 + progressB;
 
       return scoreB - scoreA;
     });
-  }, [portfolios, selectedPid, tickers]);
+  }, [portfolios, selectedStrategy, tickers]);
 
-  // Overall Portfolio summaries for the 3 portfolios
-  const portfolioSummaries = useMemo(() => {
-    const pIds: PortfolioId[] = ['PORTFOLIO_A', 'PORTFOLIO_B', 'PORTFOLIO_C'];
-    return pIds.map((pid) => {
-      const p = portfolios[pid];
-      const cfg = PORTFOLIO_CONFIGS[pid];
+  // Overall Strategy summaries for the 3 strategies
+  const strategySummaries = useMemo(() => {
+    const sIds: StrategyId[] = ['STRATEGY_TREND', 'STRATEGY_REVERSION', 'STRATEGY_SCALP'];
+    return sIds.map((sid) => {
+      const p = portfolios[sid];
+      const cfg = STRATEGY_CONFIGS[sid];
       const open = p?.trades?.filter((t) => t.status === 'OPEN') || [];
       const floatingPnl = open.reduce((acc, t) => acc + (t.netPnl || 0), 0);
       const balance = p?.account?.balance || 1000;
       const equity = Math.max(0, balance + floatingPnl);
       return {
-        pid,
+        sid,
         cfg,
         balance,
         equity,
@@ -127,7 +114,7 @@ export const ActiveTradesView: React.FC = () => {
           <div>
             <div className="flex items-center gap-2">
               <h1 className="text-base md:text-lg font-black text-white">
-                الصفقات المفتوحة حالياً (Active Positions)
+                الصفقات المفتوحة (Active Positions)
               </h1>
               <span className="flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 text-[10px] font-bold">
                 <span className={`w-2 h-2 rounded-full ${wsConnected ? 'bg-emerald-400 animate-ping' : 'bg-slate-500'}`} />
@@ -135,26 +122,71 @@ export const ActiveTradesView: React.FC = () => {
               </span>
             </div>
             <p className="text-xs text-slate-400 mt-0.5">
-              مرتبة ذكياً: الصفقات الأقرب للهدف الأول (TP1) والأعلى ربحاً في الأعلى دائماً
+              تصفية فورية حسب استراتيجيات التداول الثلاث: تتبع الترند، الارتداد، والمضاربة السريعة (25x)
             </p>
           </div>
         </div>
 
         <div className="flex items-center gap-2">
           <span className="px-3 py-1 rounded-xl bg-slate-900 border border-slate-800 text-xs font-bold font-num text-slate-300">
-            الصفقات النشطة: <span className="text-emerald-400 font-black">{openTrades.length}</span>
+            صفقات {STRATEGY_CONFIGS[selectedStrategy]?.name}: <span className="text-emerald-400 font-black">{openTrades.length}</span>
           </span>
         </div>
       </div>
 
-      {/* 2. Three Portfolio Cards at the Top */}
+      {/* 2. Three Horizontal Chips at the Top (Requirement 4) */}
+      <div className="grid grid-cols-3 gap-2 p-1.5 bg-slate-900/90 rounded-2xl border border-slate-800 shadow-inner">
+        <button
+          onClick={() => setSelectedStrategy('STRATEGY_TREND')}
+          className={`py-2 px-3 rounded-xl text-xs font-bold transition flex items-center justify-center gap-2 ${
+            selectedStrategy === 'STRATEGY_TREND'
+              ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-950/40 border border-indigo-400'
+              : 'text-slate-400 hover:text-white bg-slate-950/40'
+          }`}
+        >
+          <span>[Trend] تتبع الترند</span>
+          <span className="font-num px-1.5 py-0.5 rounded-full text-[10px] bg-black/40 text-emerald-300 font-extrabold">
+            {portfolios.STRATEGY_TREND?.trades?.filter((t) => t.status === 'OPEN').length || 0}
+          </span>
+        </button>
+
+        <button
+          onClick={() => setSelectedStrategy('STRATEGY_REVERSION')}
+          className={`py-2 px-3 rounded-xl text-xs font-bold transition flex items-center justify-center gap-2 ${
+            selectedStrategy === 'STRATEGY_REVERSION'
+              ? 'bg-cyan-600 text-white shadow-lg shadow-cyan-950/40 border border-cyan-400'
+              : 'text-slate-400 hover:text-white bg-slate-950/40'
+          }`}
+        >
+          <span>[Reversion] الارتداد</span>
+          <span className="font-num px-1.5 py-0.5 rounded-full text-[10px] bg-black/40 text-emerald-300 font-extrabold">
+            {portfolios.STRATEGY_REVERSION?.trades?.filter((t) => t.status === 'OPEN').length || 0}
+          </span>
+        </button>
+
+        <button
+          onClick={() => setSelectedStrategy('STRATEGY_SCALP')}
+          className={`py-2 px-3 rounded-xl text-xs font-bold transition flex items-center justify-center gap-2 ${
+            selectedStrategy === 'STRATEGY_SCALP'
+              ? 'bg-amber-600 text-white shadow-lg shadow-amber-950/40 border border-amber-400'
+              : 'text-slate-400 hover:text-white bg-slate-950/40'
+          }`}
+        >
+          <span>[Scalp] المضاربة (5m)</span>
+          <span className="font-num px-1.5 py-0.5 rounded-full text-[10px] bg-black/40 text-emerald-300 font-extrabold">
+            {portfolios.STRATEGY_SCALP?.trades?.filter((t) => t.status === 'OPEN').length || 0}
+          </span>
+        </button>
+      </div>
+
+      {/* 3. Three Strategy Status Cards */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-        {portfolioSummaries.map((p) => {
-          const isSelected = selectedPid === p.pid;
+        {strategySummaries.map((s) => {
+          const isSelected = selectedStrategy === s.sid;
           return (
             <button
-              key={p.pid}
-              onClick={() => setSelectedPid(isSelected ? 'ALL' : p.pid)}
+              key={s.sid}
+              onClick={() => setSelectedStrategy(s.sid)}
               className={`p-3.5 rounded-2xl text-right transition-all border ${
                 isSelected
                   ? 'bg-slate-800/90 border-emerald-500 shadow-lg shadow-emerald-950/20 ring-1 ring-emerald-500/50'
@@ -162,29 +194,29 @@ export const ActiveTradesView: React.FC = () => {
               }`}
             >
               <div className="flex items-center justify-between mb-2">
-                <span className="text-xs font-bold text-slate-200">{p.cfg.name}</span>
+                <span className="text-xs font-bold text-slate-200">{s.cfg.name}</span>
                 <span className={`text-[10px] px-2 py-0.5 rounded-md font-bold font-num ${
-                  p.cfg.id === 'PORTFOLIO_A'
-                    ? 'bg-rose-500/20 text-rose-300'
-                    : p.cfg.id === 'PORTFOLIO_B'
-                    ? 'bg-amber-500/20 text-amber-300'
-                    : 'bg-emerald-500/20 text-emerald-300'
+                  s.sid === 'STRATEGY_TREND'
+                    ? 'bg-indigo-500/20 text-indigo-300'
+                    : s.sid === 'STRATEGY_REVERSION'
+                    ? 'bg-cyan-500/20 text-cyan-300'
+                    : 'bg-amber-500/20 text-amber-300'
                 }`}>
-                  رافعة {p.cfg.leverage}x
+                  رافعة {s.cfg.leverage}x • مخاطرة 1%
                 </span>
               </div>
 
               <div className="flex items-baseline justify-between mb-1 font-num">
                 <span className="text-[11px] text-slate-400">القيمة الإجمالية:</span>
                 <span className="text-base font-black text-white">
-                  ${p.equity.toFixed(2)}
+                  ${s.equity.toFixed(2)}
                 </span>
               </div>
 
               <div className="flex items-center justify-between text-[11px] font-num text-slate-400 border-t border-slate-800/70 pt-2">
-                <span>نشطة: <strong className="text-slate-200">{p.openCount}</strong></span>
-                <span className={p.floatingPnl >= 0 ? 'text-emerald-400 font-bold' : 'text-red-400 font-bold'}>
-                  {p.floatingPnl >= 0 ? '+' : ''}${p.floatingPnl.toFixed(2)}
+                <span>صفقات مفتوحة: <strong className="text-slate-200">{s.openCount}</strong></span>
+                <span className={s.floatingPnl >= 0 ? 'text-emerald-400 font-bold' : 'text-red-400 font-bold'}>
+                  {s.floatingPnl >= 0 ? '+' : ''}${s.floatingPnl.toFixed(2)}
                 </span>
               </div>
             </button>
@@ -192,63 +224,20 @@ export const ActiveTradesView: React.FC = () => {
         })}
       </div>
 
-      {/* Portfolio Filter Bar */}
-      <div className="flex items-center gap-2 overflow-x-auto pb-1">
-        <button
-          onClick={() => setSelectedPid('ALL')}
-          className={`px-3 py-1.5 rounded-xl text-xs font-bold transition ${
-            selectedPid === 'ALL'
-              ? 'bg-emerald-500 text-black shadow-md shadow-emerald-500/20'
-              : 'bg-slate-900 border border-slate-800 text-slate-400 hover:text-white'
-          }`}
-        >
-          كافة المحافظ (الكل)
-        </button>
-        <button
-          onClick={() => setSelectedPid('PORTFOLIO_A')}
-          className={`px-3 py-1.5 rounded-xl text-xs font-bold transition ${
-            selectedPid === 'PORTFOLIO_A'
-              ? 'bg-rose-500 text-white shadow-md'
-              : 'bg-slate-900 border border-slate-800 text-slate-400 hover:text-white'
-          }`}
-        >
-          محفظة A (100x)
-        </button>
-        <button
-          onClick={() => setSelectedPid('PORTFOLIO_B')}
-          className={`px-3 py-1.5 rounded-xl text-xs font-bold transition ${
-            selectedPid === 'PORTFOLIO_B'
-              ? 'bg-amber-500 text-black shadow-md'
-              : 'bg-slate-900 border border-slate-800 text-slate-400 hover:text-white'
-          }`}
-        >
-          محفظة B (50x)
-        </button>
-        <button
-          onClick={() => setSelectedPid('PORTFOLIO_C')}
-          className={`px-3 py-1.5 rounded-xl text-xs font-bold transition ${
-            selectedPid === 'PORTFOLIO_C'
-              ? 'bg-emerald-500 text-black shadow-md'
-              : 'bg-slate-900 border border-slate-800 text-slate-400 hover:text-white'
-          }`}
-        >
-          محفظة C (25x)
-        </button>
-      </div>
-
-      {/* 3. Open Trades List with Progress Bar & Smart Sorting */}
+      {/* 4. Open Trades List with Progress Bar & Smart Sorting */}
       {openTrades.length === 0 ? (
         <div className="bg-[#121824] border border-slate-800/80 rounded-2xl p-12 text-center shadow-lg">
           <div className="w-16 h-16 rounded-full bg-slate-900 border border-slate-800 mx-auto flex items-center justify-center text-slate-500 mb-4 animate-pulse">
             <Zap className="w-8 h-8 text-emerald-400" />
           </div>
-          <h3 className="text-base font-bold text-white mb-2">لا توجد صفقات مفتوحة حالياً</h3>
+          <h3 className="text-base font-bold text-white mb-2">لا توجد صفقات مفتوحة حالياً لهذه الاستراتيجية</h3>
           <p className="text-xs text-slate-400 max-w-md mx-auto leading-relaxed mb-4">
-            الماسح التلقائي يراقب السوق المباشر لحظة بلحظة. يتم فتح الصفقات المؤكدة تلقائياً فقط عند تحقق شروط الجودة الصارمة (تقييم 60+ وسعر دخول دقيق بنسبة فرق ≤ 0.5%).
+            الماسحان 1 و 2 يقومان بمسح السوق بالتوازي وتوجيه الفرص تلقائياً للاستراتيجية المناسبة:
+            الاختراقات لـ Trend، والارتداد لـ Reversion، وفريم 5m لـ Scalp.
           </p>
           <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-xl bg-slate-900 border border-slate-800 text-xs text-emerald-400 font-bold">
             <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping" />
-            <span>المسح المستمر يعمل في الخلفية عبر كافة العقود</span>
+            <span>الماسح المزدوج يعمل في الخلفية عبر كافة العقود</span>
           </div>
         </div>
       ) : (
@@ -272,9 +261,9 @@ export const ActiveTradesView: React.FC = () => {
 
             // Clamped progress percentage for visual bar (0% - 100%)
             const barWidth = Math.max(0, Math.min(100, Math.round(tp1Progress)));
-            const portfolioName = trade.portfolioId ? PORTFOLIO_CONFIGS[trade.portfolioId]?.shortName : 'A (100x)';
+            const strategyName = trade.portfolioId ? STRATEGY_CONFIGS[trade.portfolioId]?.shortName : 'Trend 25x';
             const typeInfo = getTradeTypeInfo(trade.timeframe || '15m');
-            const isProtected = trade.positionSize < 1000;
+            const isProtected = trade.positionSize < 250;
 
             return (
               <div
@@ -324,7 +313,7 @@ export const ActiveTradesView: React.FC = () => {
                             </span>
                           )}
                           <span className="text-[10px] px-2 py-0.5 rounded bg-slate-800/80 text-slate-300 border border-slate-700/60 font-num">
-                            {portfolioName}
+                            {strategyName}
                           </span>
                           {isProtected && (
                             <span

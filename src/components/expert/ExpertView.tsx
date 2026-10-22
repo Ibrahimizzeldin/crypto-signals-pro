@@ -1,7 +1,7 @@
 import React, { useState, useMemo } from 'react';
 import { useCryptoStore } from '../../store/useCryptoStore';
-import { SetupPattern, PortfolioId } from '../../types/crypto';
-import { PORTFOLIO_CONFIGS } from '../../services/paperTradingEngine';
+import { SetupPattern, StrategyId } from '../../types/crypto';
+import { STRATEGY_CONFIGS } from '../../services/paperTradingEngine';
 import { formatPrice } from '../../utils/formatters';
 import { getPatternEmoji } from '../../utils/cryptoLogos';
 import {
@@ -23,6 +23,7 @@ import {
   BarChart3,
   ShieldCheck,
   Clock,
+  Table,
 } from 'lucide-react';
 import { getTradeTypeInfo } from '../../utils/tradeTypes';
 
@@ -59,18 +60,62 @@ export const ExpertView: React.FC = () => {
     } catch (e) {}
   };
 
-  // Open trades across all 3 portfolios
+  // Open trades across all 3 strategies
   const openTradesCount = useMemo(() => {
     let count = 0;
-    const pIds: PortfolioId[] = ['PORTFOLIO_A', 'PORTFOLIO_B', 'PORTFOLIO_C'];
-    pIds.forEach((pid) => {
-      const p = portfolios[pid];
+    const sIds: StrategyId[] = ['STRATEGY_TREND', 'STRATEGY_REVERSION', 'STRATEGY_SCALP'];
+    sIds.forEach((sid) => {
+      const p = portfolios[sid];
       if (p?.trades) {
         count += p.trades.filter((t) => t.status === 'OPEN').length;
       }
     });
     return count;
   }, [portfolios]);
+
+  // Comprehensive Comparison Table across the 3 Strategies (Requirement 5)
+  const strategiesComparison = useMemo(() => {
+    const sIds: StrategyId[] = ['STRATEGY_TREND', 'STRATEGY_REVERSION', 'STRATEGY_SCALP'];
+    return sIds.map((sid) => {
+      const cfg = STRATEGY_CONFIGS[sid];
+      const p = portfolios[sid];
+      const balance = p?.account?.balance ?? 1000;
+      const openTrades = p?.trades?.filter((t) => t.status === 'OPEN') || [];
+      const floatingPnl = openTrades.reduce((acc, t) => acc + (t.netPnl || 0), 0);
+      const equity = Math.max(0, balance + floatingPnl);
+
+      const closed = closedTradesHistory.filter((t) => t.portfolioId === sid);
+      const wins = closed.filter((t) => t.result === 'win' || t.netPnl > 0);
+      const losses = closed.filter((t) => t.result === 'loss' || t.netPnl < 0);
+      const winRate = closed.length > 0 ? Number(((wins.length / closed.length) * 100).toFixed(1)) : 0;
+
+      const realizedNetPnl = closed.reduce((acc, t) => acc + t.netPnl, 0);
+      const totalNetPnl = Number((realizedNetPnl + floatingPnl).toFixed(2));
+
+      // Max single loss on a trade
+      const maxLoss = closed.length > 0
+        ? Math.min(0, ...closed.map((t) => t.netPnl))
+        : 0;
+
+      return {
+        sid,
+        name: cfg.name,
+        shortName: cfg.shortName,
+        leverage: cfg.leverage,
+        balance: Number(balance.toFixed(2)),
+        equity: Number(equity.toFixed(2)),
+        winRate,
+        winsCount: wins.length,
+        lossesCount: losses.length,
+        closedCount: closed.length,
+        openCount: openTrades.length,
+        totalTrades: closed.length + openTrades.length,
+        realizedNetPnl: Number(realizedNetPnl.toFixed(2)),
+        totalNetPnl,
+        maxLoss: Number(maxLoss.toFixed(2)),
+      };
+    });
+  }, [portfolios, closedTradesHistory]);
 
   // General Statistics Calculation based 100% directly on closedTradesHistory
   const stats = useMemo(() => {
@@ -297,34 +342,104 @@ export const ExpertView: React.FC = () => {
           </div>
         </div>
 
-        {/* Portfolio Status Summary */}
-        <div className="mt-3 grid grid-cols-1 sm:grid-cols-3 gap-2.5 pt-3 border-t border-slate-800/80 text-xs font-num">
-          {(['PORTFOLIO_A', 'PORTFOLIO_B', 'PORTFOLIO_C'] as PortfolioId[]).map((pid) => {
-            const p = portfolios[pid];
-            const cfg = PORTFOLIO_CONFIGS[pid];
-            const trades = p?.trades || [];
-            const openTrades = trades.filter((t) => t.status === 'OPEN');
-            const closedInPortfolio = closedTradesHistory.filter((t) => t.portfolioId === pid);
-            const floatingPnl = openTrades.reduce((acc, t) => acc + (t.netPnl || 0), 0);
-            const equity = Math.max(0, (p?.account?.balance || 1000) + floatingPnl);
+        {/* 3-Strategies Comparison Table (Requirement 5) */}
+        <div className="mt-4 pt-4 border-t border-slate-800">
+          <div className="flex items-center justify-between mb-2.5">
+            <div className="flex items-center gap-2">
+              <Table className="w-4 h-4 text-emerald-400" />
+              <h3 className="text-xs font-bold text-white">جدول مقارنة الاستراتيجيات الثلاث (Strategies Comparison Benchmark)</h3>
+            </div>
+            <span className="text-[10px] text-slate-400 font-num">
+              رصيد افتتاحي: $1,000 لكل استراتيجية • رافعة 25x • مخاطرة 1%
+            </span>
+          </div>
 
-            return (
-              <div key={pid} className="bg-slate-900/50 rounded-xl p-2.5 border border-slate-800/60 flex items-center justify-between">
-                <div>
-                  <span className="font-bold text-slate-200 block font-sans">{cfg.name}</span>
-                  <span className="text-[10px] text-slate-400 font-sans">
-                    مفتوحة: {openTrades.length} | مغلقة بالسجل: {closedInPortfolio.length}
-                  </span>
-                </div>
-                <div className="text-left">
-                  <span className="font-black text-white block">${equity.toFixed(2)}</span>
-                  <span className={`text-[10px] font-bold ${floatingPnl >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
-                    {floatingPnl >= 0 ? '+' : ''}${floatingPnl.toFixed(2)}
-                  </span>
-                </div>
-              </div>
-            );
-          })}
+          <div className="overflow-x-auto rounded-xl border border-slate-800">
+            <table className="w-full text-right text-xs">
+              <thead>
+                <tr className="bg-slate-900/90 text-slate-400 border-b border-slate-800 text-[11px]">
+                  <th className="py-2.5 px-3 font-bold">الاستراتيجية</th>
+                  <th className="py-2.5 px-3 font-bold">الرصيد (Balance)</th>
+                  <th className="py-2.5 px-3 font-bold">القيمة الحالية (Equity)</th>
+                  <th className="py-2.5 px-3 font-bold">نسبة الفوز (Win Rate)</th>
+                  <th className="py-2.5 px-3 font-bold">صافي الربح (Net PnL)</th>
+                  <th className="py-2.5 px-3 font-bold">أقصى خسارة (Max Loss)</th>
+                  <th className="py-2.5 px-3 font-bold">الصفقات (مغلقة/مفتوحة)</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-800/60 font-num text-[11px]">
+                {strategiesComparison.map((s) => {
+                  const isPositivePnl = s.totalNetPnl >= 0;
+                  const rowBadgeClass =
+                    s.sid === 'STRATEGY_TREND'
+                      ? 'border-indigo-500/40 text-indigo-300 bg-indigo-500/10'
+                      : s.sid === 'STRATEGY_REVERSION'
+                      ? 'border-cyan-500/40 text-cyan-300 bg-cyan-500/10'
+                      : 'border-amber-500/40 text-amber-300 bg-amber-500/10';
+
+                  return (
+                    <tr key={s.sid} className="bg-slate-900/40 hover:bg-slate-800/40 transition">
+                      {/* Strategy */}
+                      <td className="py-2.5 px-3 font-sans">
+                        <div className="flex items-center gap-1.5">
+                          <span className={`px-2 py-0.5 rounded-md border text-[10px] font-bold ${rowBadgeClass}`}>
+                            {s.shortName}
+                          </span>
+                          <span className="font-bold text-white text-xs">{s.name}</span>
+                        </div>
+                      </td>
+
+                      {/* Balance */}
+                      <td className="py-2.5 px-3 text-slate-200 font-bold">
+                        ${s.balance.toFixed(2)}
+                      </td>
+
+                      {/* Equity */}
+                      <td className="py-2.5 px-3 font-black">
+                        <span className={s.equity >= 1000 ? 'text-emerald-400' : 'text-rose-400'}>
+                          ${s.equity.toFixed(2)}
+                        </span>
+                      </td>
+
+                      {/* Win Rate */}
+                      <td className="py-2.5 px-3">
+                        <div className="flex items-center gap-1.5">
+                          <span className={`font-bold ${s.winRate >= 50 ? 'text-emerald-400' : 'text-slate-300'}`}>
+                            {s.winRate}%
+                          </span>
+                          <span className="text-[10px] text-slate-500 font-sans">
+                            ({s.winsCount}W / {s.lossesCount}L)
+                          </span>
+                        </div>
+                      </td>
+
+                      {/* Net PnL */}
+                      <td className="py-2.5 px-3 font-black">
+                        <span className={isPositivePnl ? 'text-emerald-400' : 'text-rose-400'}>
+                          {isPositivePnl ? '+' : ''}${s.totalNetPnl.toFixed(2)}
+                        </span>
+                      </td>
+
+                      {/* Max Loss */}
+                      <td className="py-2.5 px-3">
+                        <span className={s.maxLoss < 0 ? 'text-rose-400 font-bold' : 'text-slate-400'}>
+                          {s.maxLoss < 0 ? `-$${Math.abs(s.maxLoss).toFixed(2)}` : '$0.00'}
+                        </span>
+                      </td>
+
+                      {/* Trades Count */}
+                      <td className="py-2.5 px-3 text-slate-300">
+                        <span className="font-bold text-white">{s.totalTrades}</span>{' '}
+                        <span className="text-[10px] text-slate-500 font-sans">
+                          ({s.closedCount} مغلقة / {s.openCount} مفتوحة)
+                        </span>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
         </div>
       </div>
 
@@ -443,7 +558,7 @@ export const ExpertView: React.FC = () => {
             {closedTradesHistory.slice(0, 20).map((t) => {
               const isWin = t.netPnl >= 0;
               const typeInfo = getTradeTypeInfo(t.timeframe || '15m');
-              const cfg = PORTFOLIO_CONFIGS[t.portfolioId];
+              const cfg = STRATEGY_CONFIGS[t.portfolioId] || STRATEGY_CONFIGS.STRATEGY_TREND;
 
               const getReasonBadge = (reason: string) => {
                 switch (reason) {

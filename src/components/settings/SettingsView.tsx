@@ -247,13 +247,15 @@ export const SettingsView: React.FC = () => {
 
       </div>
 
-      {/* Factory Reset Section (Prompt Requirement 2 & 5.3) */}
-      <div className="bg-[#121824] border border-red-900/40 rounded-2xl p-4 shadow-xl space-y-3">
+      {/* Factory Reset Section (Trading Lab: Requirement 6) */}
+      <div className="bg-[#121824] border border-red-900/50 rounded-2xl p-4 shadow-xl space-y-3">
         <div className="flex items-center gap-2">
           <RotateCcw className="w-5 h-5 text-red-400" />
           <div>
             <h3 className="text-xs font-black text-white">إعادة ضبط المصنع (Factory Reset)</h3>
-            <span className="text-[11px] text-slate-400">مسح كل الصفقات والسجل وإعادة رصيد المحافظ إلى 1000$ وتصفير الإحصائيات</span>
+            <span className="text-[11px] text-slate-400">
+              مسح البيانات القديمة وإعادة تعيين الاستراتيجيات الثلاث (Trend, Reversion, Scalp) برصيد $1,000 لكل منها
+            </span>
           </div>
         </div>
 
@@ -261,17 +263,17 @@ export const SettingsView: React.FC = () => {
           <div className="p-3 rounded-xl bg-red-950/60 border border-red-500/50 space-y-2.5">
             <div className="flex items-center gap-2 text-xs text-red-300 font-bold">
               <AlertTriangle className="w-4 h-4 text-red-400 shrink-0" />
-              <span>هل أنت متأكد من مسح جميع البيانات والبدء من جديد؟</span>
+              <span>هل أنت متأكد من تنفيذ إعادة ضبط المصنع ومسح البيانات القديمة؟</span>
             </div>
             <p className="text-[11px] text-slate-300">
-              سيتم مسح كل الصفقات المفتوحة والمغلقة فوراً، وتصفير سجل العمليات، وإعادة رصيد محافظ A و B و C إلى 1000$ نقداً.
+              سيتم مسح كل الصفقات المفتوحة والمغلقة فوراً، وتصفير سجل العمليات، وإعادة ضبط الاستراتيجيات الثلاث (Trend, Reversion, Scalp) إلى 1,000$ برصيد أولي ورافعة 25x.
             </p>
             <div className="flex items-center gap-2 pt-1">
               <button
                 onClick={handleClear}
                 className="flex-1 py-2 px-3 rounded-xl bg-red-600 hover:bg-red-500 text-white text-xs font-bold transition shadow-lg shadow-red-950/60"
               >
-                نعم، امسح كل شيء وابدأ من جديد
+                نعم، إعادة ضبط المصنع الآن
               </button>
               <button
                 onClick={() => setConfirmClear(false)}
@@ -284,10 +286,10 @@ export const SettingsView: React.FC = () => {
         ) : (
           <button
             onClick={() => setConfirmClear(true)}
-            className="w-full flex items-center justify-center gap-2 py-2.5 px-3 rounded-xl bg-red-500/15 hover:bg-red-500/25 text-red-400 hover:text-red-300 text-xs font-bold transition border border-red-500/30 active:scale-[0.99]"
+            className="w-full flex items-center justify-center gap-2 py-2.5 px-3 rounded-xl bg-red-500/20 hover:bg-red-500/30 text-red-400 hover:text-red-300 text-xs font-bold transition border border-red-500/40 active:scale-[0.99]"
           >
-            <Trash2 className="w-4 h-4" />
-            <span>مسح جميع البيانات والبدء من جديد</span>
+            <RotateCcw className="w-4 h-4" />
+            <span>إعادة ضبط المصنع (Factory Reset)</span>
           </button>
         )}
       </div>

@@ -1,9 +1,10 @@
 import { fetchKlines, KLINE_CACHE_TTL_MS, isCryptoFuturesSymbol } from './binanceApi';
 import { buildMultiTimeframeAnalysis } from '../utils/signalEngine';
 import { useCryptoStore } from '../store/useCryptoStore';
-import { MultiTimeframeAnalysis, Timeframe, Ticker24h } from '../types/crypto';
+import { MultiTimeframeAnalysis, Timeframe } from '../types/crypto';
 
 export interface ScannerProgress {
+  scannerId: 1 | 2;
   isScanning: boolean;
   scannedCount: number;
   totalEligible: number;
@@ -11,6 +12,7 @@ export interface ScannerProgress {
   instantSignalsCount: number; // >= 70
   watchSignalsCount: number;   // 55 - 69
   lastScanTimestamp: number;
+  symbols: string[];
 }
 
 // 15-Minute Scan Results Cache
@@ -21,12 +23,15 @@ interface CachedAnalysis {
 }
 const scanCache = new Map<string, CachedAnalysis>();
 
-class AutoScannerEngine {
+class DualAutoScannerEngine {
   private isRunning: boolean = false;
   private abortRequested: boolean = false;
-  private progressListeners: Array<(p: ScannerProgress) => void> = [];
 
-  private currentProgress: ScannerProgress = {
+  private progress1Listeners: Array<(p: ScannerProgress) => void> = [];
+  private progress2Listeners: Array<(p: ScannerProgress) => void> = [];
+
+  private progress1: ScannerProgress = {
+    scannerId: 1,
     isScanning: false,
     scannedCount: 0,
     totalEligible: 0,
@@ -34,18 +39,52 @@ class AutoScannerEngine {
     instantSignalsCount: 0,
     watchSignalsCount: 0,
     lastScanTimestamp: 0,
+    symbols: [],
   };
 
-  public subscribeProgress(listener: (p: ScannerProgress) => void) {
-    this.progressListeners.push(listener);
-    listener(this.currentProgress);
+  private progress2: ScannerProgress = {
+    scannerId: 2,
+    isScanning: false,
+    scannedCount: 0,
+    totalEligible: 0,
+    currentSymbol: '',
+    instantSignalsCount: 0,
+    watchSignalsCount: 0,
+    lastScanTimestamp: 0,
+    symbols: [],
+  };
+
+  public subscribeProgress1(listener: (p: ScannerProgress) => void) {
+    this.progress1Listeners.push(listener);
+    listener({ ...this.progress1 });
     return () => {
-      this.progressListeners = this.progressListeners.filter((l) => l !== listener);
+      this.progress1Listeners = this.progress1Listeners.filter((l) => l !== listener);
     };
   }
 
-  private notifyProgress() {
-    this.progressListeners.forEach((l) => l({ ...this.currentProgress }));
+  public subscribeProgress2(listener: (p: ScannerProgress) => void) {
+    this.progress2Listeners.push(listener);
+    listener({ ...this.progress2 });
+    return () => {
+      this.progress2Listeners = this.progress2Listeners.filter((l) => l !== listener);
+    };
+  }
+
+  // Generic subscribe for backward compatibility
+  public subscribeProgress(listener: (p: ScannerProgress) => void) {
+    return this.subscribeProgress1(listener);
+  }
+
+  public getProgress(scannerId: 1 | 2): ScannerProgress {
+    return scannerId === 1 ? { ...this.progress1 } : { ...this.progress2 };
+  }
+
+  private notifyProgress1() {
+    this.progress1Listeners.forEach((l) => l({ ...this.progress1 }));
+  }
+
+  private notifyProgress2() {
+    this.progress2Listeners.forEach((l) => l({ ...this.progress2 }));
   }
 
   public getCachedAnalysis(symbol: string): MultiTimeframeAnalysis | null {
@@ -68,8 +107,7 @@ class AutoScannerEngine {
   }
 
   /**
-   * Scans a single symbol deeply across requested timeframes (15m, 1h, 4h, 1d, 3d, 1w)
-   * With 15-minute caching and rate limit safety
+   * Scans a single symbol deeply across multi-timeframes (15m, 1h, 4h, 1d)
    */
   public async scanSingleSymbol(
     symbol: string,
@@ -85,8 +123,6 @@ class AutoScannerEngine {
       const currentPrice = store.tickers[symbol]?.lastPrice;
       const funding = store.fundingRates[symbol] ?? 0.0001;
 
-      // Parallel fetch with rate limit delay handled in fetchKlines
-      // 15m & 1h for entry, 4h for confirmation, 1d, 3d, 1w for macro trend
       const [k15m, k1h, k4h, k1d] = await Promise.all([
         fetchKlines(symbol, '15m', 150, forceRefresh),
         fetchKlines(symbol, '1h', 150, forceRefresh),
@@ -98,7 +134,6 @@ class AutoScannerEngine {
 
       const effectivePrice = currentPrice || k15m[k15m.length - 1]?.close || 100;
 
-      // Build analysis using the exact 100-point smart score system
       const candleMap: Record<Timeframe, typeof k15m> = {
         '1m': [],
         '5m': [],
@@ -106,7 +141,7 @@ class AutoScannerEngine {
         '1h': k1h,
         '4h': k4h,
         '1d': k1d,
-        '3d': [], // derived or fallback to 1d trend if needed
+        '3d': [],
         '1w': [],
       };
 
@@ -117,119 +152,146 @@ class AutoScannerEngine {
         funding
       );
 
-      // Save to 15-minute cache
       scanCache.set(symbol, {
         analysis,
         timestamp: Date.now(),
       });
 
-      // Save to global crypto store
+      // Update signal cache in store
       store.setSignalForSymbol(symbol, analysis);
 
-      // Automatic Execution in all 3 portfolios if criteria met:
-      // Score >= 70 -> Instant Market entry in Portfolios A (100x), B (50x), C (25x)
-      // Score 55-69 -> Pending limit entry in Portfolios A, B, C
-      const score = analysis.scoreBreakdown?.totalScore ?? analysis.confidence;
-      if (score >= 55) {
+      // Auto evaluate & execute trade into matching strategy
+      const sc = analysis.scoreBreakdown?.totalScore ?? analysis.confidence;
+      if (sc >= 55 && (analysis.targets?.riskRewardRatio || 0) >= 1.5) {
         store.evaluateAndExecuteSignal(analysis, '15m');
       }
 
       return analysis;
     } catch (e) {
-      console.warn(`Error scanning symbol ${symbol}:`, e);
+      console.warn(`Scan error for ${symbol}:`, e);
       return null;
     }
   }
 
   /**
-   * Continuous background batch scanner (حلقة المسح اللانهائية):
-   * Loops through all eligible Binance Futures symbols (volume >= 3M USDT)
-   * Once finished, waits 1 second to avoid API ban, then immediately restarts!
+   * Internal worker loop for one half of the symbol list
+   */
+  private async runWorker(
+    scannerId: 1 | 2,
+    getSymbols: () => string[]
+  ) {
+    while (!this.abortRequested) {
+      const symbols = getSymbols();
+      if (symbols.length === 0) {
+        await new Promise((r) => setTimeout(r, 2000));
+        continue;
+      }
+
+      const progress = scannerId === 1 ? this.progress1 : this.progress2;
+      const notify = scannerId === 1 ? () => this.notifyProgress1() : () => this.notifyProgress2();
+
+      progress.isScanning = true;
+      progress.scannedCount = 0;
+      progress.totalEligible = symbols.length;
+      progress.currentSymbol = 'جاري المسح المستمر...';
+      progress.symbols = symbols;
+      progress.lastScanTimestamp = Date.now();
+      notify();
+
+      for (let i = 0; i < symbols.length; i++) {
+        if (this.abortRequested) break;
+
+        const sym = symbols[i];
+        progress.currentSymbol = sym;
+        progress.scannedCount = i + 1;
+        notify();
+
+        const cached = scanCache.get(sym);
+        const isStale = !cached || Date.now() - cached.timestamp >= SCAN_CACHE_TTL_MS;
+
+        if (isStale) {
+          const analysis = await this.scanSingleSymbol(sym);
+          if (analysis) {
+            const sc = analysis.scoreBreakdown?.totalScore ?? analysis.confidence;
+            if (sc >= 70) progress.instantSignalsCount++;
+            else if (sc >= 55) progress.watchSignalsCount++;
+          }
+          // Spacing between requests
+          await new Promise((r) => setTimeout(r, 250));
+        } else {
+          const sc = cached.analysis.scoreBreakdown?.totalScore ?? cached.analysis.confidence;
+          if (sc >= 70) progress.instantSignalsCount++;
+          else if (sc >= 55) progress.watchSignalsCount++;
+
+          if (sc >= 55 && (cached.analysis.targets?.riskRewardRatio || 0) >= 1.5) {
+            useCryptoStore.getState().evaluateAndExecuteSignal(cached.analysis, '15m');
+          }
+        }
+      }
+
+      progress.isScanning = true;
+      progress.currentSymbol = 'اكتملت الدورة • إعادة المسح...';
+      progress.lastScanTimestamp = Date.now();
+      notify();
+
+      // Pause 1 second before next cycle
+      await new Promise((r) => setTimeout(r, 1000));
+    }
+  }
+
+  /**
+   * Starts both Scanner 1 and Scanner 2 in parallel continuous loops
+   * dividing the Binance Futures symbols list into two halves.
    */
   public async startBackgroundScanner() {
     if (this.isRunning) return;
     this.isRunning = true;
     this.abortRequested = false;
 
-    while (!this.abortRequested) {
+    const getSplitSymbols = (): { part1: string[]; part2: string[] } => {
       const store = useCryptoStore.getState();
       const allTickers = Object.values(store.tickers);
-
-      // Filter only verified Crypto Futures with quoteVolume >= 3M USDT
       const eligibleTickers = allTickers
         .filter((t) => isCryptoFuturesSymbol(t.symbol) && t.quoteVolume >= 3000000)
         .sort((a, b) => b.quoteVolume - a.quoteVolume);
 
-      if (eligibleTickers.length === 0) {
-        // Wait 2 seconds for initial tickers to load
-        await new Promise((r) => setTimeout(r, 2000));
-        continue;
-      }
-
-      this.currentProgress = {
-        isScanning: true,
-        scannedCount: 0,
-        totalEligible: eligibleTickers.length,
-        currentSymbol: 'جاري المسح المستمر...',
-        instantSignalsCount: 0,
-        watchSignalsCount: 0,
-        lastScanTimestamp: Date.now(),
+      const symbols = eligibleTickers.map((t) => t.symbol);
+      const half = Math.ceil(symbols.length / 2);
+      return {
+        part1: symbols.slice(0, half),
+        part2: symbols.slice(half),
       };
-      this.notifyProgress();
+    };
 
-      // Scan in batches with 250ms spacing to maintain flawless rate limit compliance
-      for (let i = 0; i < eligibleTickers.length; i++) {
-        if (this.abortRequested) break;
-
-        const ticker = eligibleTickers[i];
-        this.currentProgress.currentSymbol = ticker.symbol;
-        this.currentProgress.scannedCount = i + 1;
-        this.notifyProgress();
-
-        // Scan if not cached or cache is older than 15 minutes
-        const cached = scanCache.get(ticker.symbol);
-        const isStale = !cached || Date.now() - cached.timestamp >= SCAN_CACHE_TTL_MS;
-
-        if (isStale) {
-          const analysis = await this.scanSingleSymbol(ticker.symbol);
-          if (analysis) {
-            const sc = analysis.scoreBreakdown?.totalScore ?? analysis.confidence;
-            if (sc >= 70) this.currentProgress.instantSignalsCount++;
-            else if (sc >= 55) this.currentProgress.watchSignalsCount++;
-          }
-          // Polite delay between API calls
-          await new Promise((r) => setTimeout(r, 250));
-        } else {
-          // Re-evaluate existing cache and execute if capacity is available
-          const sc = cached.analysis.scoreBreakdown?.totalScore ?? cached.analysis.confidence;
-          if (sc >= 70) this.currentProgress.instantSignalsCount++;
-          else if (sc >= 55) this.currentProgress.watchSignalsCount++;
-
-          if (sc >= 55 && (cached.analysis.targets?.riskRewardRatio || 0) >= 1.5) {
-            store.evaluateAndExecuteSignal(cached.analysis, '15m');
-          }
-        }
-      }
-
-      // Requirement: حلقة المسح اللانهائية - ينتظر ثانية واحدة لتفادي حظر API ثم يبدأ من جديد
-      this.currentProgress.isScanning = true;
-      this.currentProgress.currentSymbol = 'جاري المسح المستمر...';
-      this.currentProgress.lastScanTimestamp = Date.now();
-      this.notifyProgress();
-
-      // Pause 1 second before restarting cycle immediately
-      await new Promise((r) => setTimeout(r, 1000));
+    // Wait until tickers are loaded
+    let splits = getSplitSymbols();
+    while (splits.part1.length === 0 && !this.abortRequested) {
+      await new Promise((r) => setTimeout(r, 1500));
+      splits = getSplitSymbols();
     }
 
-    this.isRunning = false;
+    if (this.abortRequested) {
+      this.isRunning = false;
+      return;
+    }
+
+    // Launch both workers in parallel!
+    Promise.all([
+      this.runWorker(1, () => getSplitSymbols().part1),
+      this.runWorker(2, () => getSplitSymbols().part2),
+    ]).catch((err) => {
+      console.error('Scanner workers error:', err);
+    });
   }
 
   public stopBackgroundScanner() {
     this.abortRequested = true;
     this.isRunning = false;
-    this.currentProgress.isScanning = false;
-    this.notifyProgress();
+    this.progress1.isScanning = false;
+    this.progress2.isScanning = false;
+    this.notifyProgress1();
+    this.notifyProgress2();
   }
 }
 
-export const scannerEngine = new AutoScannerEngine();
+export const scannerEngine = new DualAutoScannerEngine();

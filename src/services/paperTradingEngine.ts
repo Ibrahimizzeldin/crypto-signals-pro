@@ -8,6 +8,7 @@ import {
   Timeframe,
   SetupPattern,
   MarketRegimeInfo,
+  StrategyId,
   PortfolioId,
   PortfolioConfig,
   PortfolioState,
@@ -15,45 +16,71 @@ import {
 import { formatPrice } from '../utils/formatters';
 import { getTradeTypeInfo } from '../utils/tradeTypes';
 
-// Portfolio Configurations for Cross Margin Trading with Leverage Liquidation Protection
-export const PORTFOLIO_CONFIGS: Record<PortfolioId, PortfolioConfig> = {
-  PORTFOLIO_A: {
-    id: 'PORTFOLIO_A',
-    name: 'المحفظة A (100x)',
-    shortName: 'A (100x)',
-    leverage: 100,
-    marginPerTrade: 10, // $10 margin for $1,000 position size ($1,000 ÷ 100)
-    positionSize: 1000,
-    maxConcurrentTrades: 9999, // Unlimited trades while free margin permits
-    liquidationDistancePercent: 1.0, // 1.0% liquidation distance for 100x leverage
-    badgeColor: 'rose',
-    description: 'Cross Margin • رافعة 100x • حجم $1,000 • هامش $10 • مسافة تصفية 1.0%',
-  },
-  PORTFOLIO_B: {
-    id: 'PORTFOLIO_B',
-    name: 'المحفظة B (50x)',
-    shortName: 'B (50x)',
-    leverage: 50,
-    marginPerTrade: 20, // $20 margin for $1,000 position size ($1,000 ÷ 50)
-    positionSize: 1000,
-    maxConcurrentTrades: 9999, // Unlimited trades while free margin permits
-    liquidationDistancePercent: 2.0, // 2.0% liquidation distance for 50x leverage
-    badgeColor: 'amber',
-    description: 'Cross Margin • رافعة 50x • حجم $1,000 • هامش $20 • مسافة تصفية 2.0%',
-  },
-  PORTFOLIO_C: {
-    id: 'PORTFOLIO_C',
-    name: 'المحفظة C (25x)',
-    shortName: 'C (25x)',
+// Strategic Trading Lab Configurations (3 Strategies, 25x Fixed Leverage, 1% Risk Per Trade)
+export const STRATEGY_CONFIGS: Record<PortfolioId, PortfolioConfig> = {
+  STRATEGY_TREND: {
+    id: 'STRATEGY_TREND',
+    strategyNumber: 1,
+    name: 'Strategy 1: Trend Following',
+    nameArabic: 'استراتيجية 1: تتبع الترند (Breakouts)',
+    shortName: 'تتبع الترند (Trend)',
+    shortNameEn: 'Trend',
+    type: 'TREND_FOLLOWING',
+    targetPatternDesc: 'Breakouts (اختراق)',
     leverage: 25,
-    marginPerTrade: 40, // $40 margin for $1,000 position size ($1,000 ÷ 25)
-    positionSize: 1000,
-    maxConcurrentTrades: 9999, // Unlimited trades while free margin permits
-    liquidationDistancePercent: 4.0, // 4.0% liquidation distance for 25x leverage
+    riskPerTradePercent: 1,
+    marginPerTrade: 10, // $10 margin (1% of $1,000 balance)
+    positionSize: 250,  // $10 * 25x = $250 position size
+    maxConcurrentTrades: 9999,
+    liquidationDistancePercent: 4.0, // 100 / 25 = 4.0%
     badgeColor: 'emerald',
-    description: 'Cross Margin • رافعة 25x • حجم $1,000 • هامش $40 • مسافة تصفية 4.0%',
+    badgeBg: 'bg-emerald-500/15',
+    badgeBorder: 'border-emerald-500/40',
+    description: 'تتبع الترند القوي واقتناص الاختراقات السعرية (Breakouts) • رافعة 25x • مخاطرة 1%',
+  },
+  STRATEGY_REVERSION: {
+    id: 'STRATEGY_REVERSION',
+    strategyNumber: 2,
+    name: 'Strategy 2: Mean Reversion',
+    nameArabic: 'استراتيجية 2: الارتداد (Retest/Range)',
+    shortName: 'الارتداد (Reversion)',
+    shortNameEn: 'Reversion',
+    type: 'MEAN_REVERSION',
+    targetPatternDesc: 'Retest / Range (ارتداد / نطاق عرضي)',
+    leverage: 25,
+    riskPerTradePercent: 1,
+    marginPerTrade: 10, // $10 margin (1% of $1,000 balance)
+    positionSize: 250,  // $10 * 25x = $250 position size
+    maxConcurrentTrades: 9999,
+    liquidationDistancePercent: 4.0, // 100 / 25 = 4.0%
+    badgeColor: 'sky',
+    badgeBg: 'bg-sky-500/15',
+    badgeBorder: 'border-sky-500/40',
+    description: 'التداول مع ارتدادات الدعم والمقاومة في السوق العرضي (Retest / Range) • رافعة 25x • مخاطرة 1%',
+  },
+  STRATEGY_SCALP: {
+    id: 'STRATEGY_SCALP',
+    strategyNumber: 3,
+    name: 'Strategy 3: Scalping',
+    nameArabic: 'استراتيجية 3: المضاربة السريعة (Scalp 5m)',
+    shortName: 'المضاربة السريعة (Scalp)',
+    shortNameEn: 'Scalp',
+    type: 'SCALPING',
+    targetPatternDesc: 'Scalping 5m (فريمات صغيرة)',
+    leverage: 25,
+    riskPerTradePercent: 1,
+    marginPerTrade: 10, // $10 margin (1% of $1,000 balance)
+    positionSize: 250,  // $10 * 25x = $250 position size
+    maxConcurrentTrades: 9999,
+    liquidationDistancePercent: 4.0, // 100 / 25 = 4.0%
+    badgeColor: 'amber',
+    badgeBg: 'bg-amber-500/15',
+    badgeBorder: 'border-amber-500/40',
+    description: 'اقتناص حركات سريعة وخاطفة على الفريم اللحظي (5m / 1m) • رافعة 25x • مخاطرة 1%',
   },
 };
+
+export const PORTFOLIO_CONFIGS = STRATEGY_CONFIGS;
 
 /**
  * Computes Cross Margin liquidation price and distance for an individual trade
@@ -204,20 +231,20 @@ export const INITIAL_PAPER_ACCOUNT: PaperAccount = createInitialAccount();
  * No mock or sample trades - starts 100% clean!
  */
 export const createInitialPortfolios = (): Record<PortfolioId, PortfolioState> => ({
-  PORTFOLIO_A: {
-    config: PORTFOLIO_CONFIGS.PORTFOLIO_A,
+  STRATEGY_TREND: {
+    config: STRATEGY_CONFIGS.STRATEGY_TREND,
     account: createInitialAccount(),
     trades: [],
     equityHistory: [],
   },
-  PORTFOLIO_B: {
-    config: PORTFOLIO_CONFIGS.PORTFOLIO_B,
+  STRATEGY_REVERSION: {
+    config: STRATEGY_CONFIGS.STRATEGY_REVERSION,
     account: createInitialAccount(),
     trades: [],
     equityHistory: [],
   },
-  PORTFOLIO_C: {
-    config: PORTFOLIO_CONFIGS.PORTFOLIO_C,
+  STRATEGY_SCALP: {
+    config: STRATEGY_CONFIGS.STRATEGY_SCALP,
     account: createInitialAccount(),
     trades: [],
     equityHistory: [],
@@ -395,28 +422,17 @@ export function createPaperTradeForPortfolio(
   const slDistPercent = actualEntryPrice > 0 ? Number((Math.abs((actualEntryPrice - sl) / actualEntryPrice) * 100).toFixed(2)) : Math.abs(slPercent);
   const isLargeTimeframe = timeframe === '4h' || timeframe === '1d' || timeframe === '3d' || timeframe === '1w';
 
-  // 5. Dynamic Liquidation Protection:
-  // إذا كانت مسافة الاستوب (مثلاً 5%) أكبر من مسافة التصفية في المحفظة (1% في 100x):
-  // تقليل حجم الصفقة (Position Size) تلقائياً لزيادة مسافة التصفية لتكون آمنة وأكبر من مسافة الاستوب
-  let positionSize = 1000;
-  let effectiveLeverage = config.leverage;
-  const allocatedMargin = config.marginPerTrade;
-  let isLiquidationProtected = false;
-
-  if (slDistPercent > config.liquidationDistancePercent) {
-    // توفير مسافة تصفية آمنة تتجاوز الوقف بهامش 35%
-    const safeLiqDistance = slDistPercent * 1.35;
-    const maxSafeLev = Math.max(1, Math.min(config.leverage, Math.floor(100 / safeLiqDistance)));
-    effectiveLeverage = maxSafeLev;
-    positionSize = Math.max(50, Math.round(allocatedMargin * effectiveLeverage));
-    isLiquidationProtected = true;
-  }
+  // 5. Fixed 25x Leverage and 1% Risk sizing (Trading Lab rule)
+  const allocatedMargin = config.marginPerTrade || 10;
+  const effectiveLeverage = 25; // Fixed 25x
+  const positionSize = config.positionSize || (allocatedMargin * effectiveLeverage); // 250 USDT
+  const isLiquidationProtected = false;
 
   // Multi-Timeframe trade categorization
   const typeInfo = getTradeTypeInfo(timeframe || analysis.timeframe || '15m');
 
-  // Commission $0.40 only if trade actually opens
-  const commissionPaid = hasExpired ? 0 : 0.40;
+  // Commission $0.10 for 250 USDT position size (0.04% round trip) only if trade actually opens
+  const commissionPaid = hasExpired ? 0 : 0.10;
   const slippagePaid = 0;
 
   const crossLiq = computeCrossLiquidation(actualEntryPrice, side, 1000, 1, positionSize);
@@ -501,11 +517,11 @@ export function createTriplePaperTradesFromSignal(
   analysis: MultiTimeframeAnalysis,
   timeframe: Timeframe = '15m',
   livePrice?: number
-): Record<PortfolioId, PaperTrade> {
+): Record<StrategyId, PaperTrade> {
   return {
-    PORTFOLIO_A: createPaperTradeForPortfolio(analysis, 'PORTFOLIO_A', timeframe, livePrice),
-    PORTFOLIO_B: createPaperTradeForPortfolio(analysis, 'PORTFOLIO_B', timeframe, livePrice),
-    PORTFOLIO_C: createPaperTradeForPortfolio(analysis, 'PORTFOLIO_C', timeframe, livePrice),
+    STRATEGY_TREND: createPaperTradeForPortfolio(analysis, 'STRATEGY_TREND', timeframe, livePrice),
+    STRATEGY_REVERSION: createPaperTradeForPortfolio(analysis, 'STRATEGY_REVERSION', timeframe, livePrice),
+    STRATEGY_SCALP: createPaperTradeForPortfolio(analysis, 'STRATEGY_SCALP', timeframe, livePrice),
   };
 }
 
@@ -515,7 +531,7 @@ export function createPaperTradeFromSignal(
   timeframe: Timeframe = '15m',
   livePrice?: number
 ): PaperTrade {
-  return createPaperTradeForPortfolio(analysis, 'PORTFOLIO_A', timeframe, livePrice);
+  return createPaperTradeForPortfolio(analysis, 'STRATEGY_TREND', timeframe, livePrice);
 }
 
 /**
@@ -541,7 +557,7 @@ export function processPaperTradeUpdate(
   }
 
   const updated: PaperTrade = { ...trade, currentPrice };
-  const portfolioConfig = trade.portfolioId ? PORTFOLIO_CONFIGS[trade.portfolioId] : PORTFOLIO_CONFIGS.PORTFOLIO_A;
+  const portfolioConfig = trade.portfolioId ? STRATEGY_CONFIGS[trade.portfolioId] : STRATEGY_CONFIGS.STRATEGY_TREND;
   const portfolioLabel = portfolioConfig.shortName;
 
   // 1. If PENDING: check if price touches entry level

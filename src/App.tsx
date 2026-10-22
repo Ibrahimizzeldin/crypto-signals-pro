@@ -11,7 +11,6 @@ import { BottomNav } from './components/common/BottomNav';
 import { HomeView } from './components/home/HomeView';
 import { ScannerView } from './components/scanner/ScannerView';
 import { ActiveTradesView } from './components/active/ActiveTradesView';
-import { RecommendationsView } from './components/recommendations/RecommendationsView';
 import { ExpertView } from './components/expert/ExpertView';
 import { SettingsView } from './components/settings/SettingsView';
 import { CoinDetailModal } from './components/detail/CoinDetailModal';
@@ -62,8 +61,8 @@ export default function App() {
   useEffect(() => {
     let isMounted = true;
 
-    // 0. Enforce Requirement 5: Start 100% clean with $1,000 per portfolio and 0 trades
-    const cleanCheckKey = 'crypto_clean_rules_v9_applied';
+    // 0. Enforce Trading Lab: Start 100% clean with $1,000 per strategy and 0 trades
+    const cleanCheckKey = 'crypto_clean_trading_lab_v10_applied';
     if (typeof window !== 'undefined' && !window.localStorage.getItem(cleanCheckKey)) {
       useCryptoStore.getState().clearAllUserData();
       window.localStorage.setItem(cleanCheckKey, 'true');
@@ -237,9 +236,9 @@ export default function App() {
       {/* Main Content Area based on Tab */}
       <main className="flex-1 w-full overflow-y-auto">
         {activeTab === 'home' && <HomeView />}
-        {activeTab === 'scanner' && <ScannerView />}
+        {activeTab === 'scanner' && <ScannerView scannerId={1} />}
+        {activeTab === 'scanner2' && <ScannerView scannerId={2} />}
         {(activeTab === 'active' || activeTab === 'performance') && <ActiveTradesView />}
-        {(activeTab === 'recommendations' || activeTab === 'alerts') && <RecommendationsView />}
         {(activeTab === 'expert' || activeTab === 'journal') && <ExpertView />}
         {activeTab === 'settings' && <SettingsView />}
       </main>

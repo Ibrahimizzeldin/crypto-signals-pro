@@ -11,11 +11,13 @@ import {
   PaperAccount,
   EquityPoint,
   MarketRegimeInfo,
+  StrategyId,
   PortfolioId,
   PortfolioState,
   ClosedTradeRecord,
 } from '../types/crypto';
 import {
+  STRATEGY_CONFIGS,
   PORTFOLIO_CONFIGS,
   INITIAL_PAPER_ACCOUNT,
   createInitialAccount,
@@ -32,7 +34,7 @@ import { getProjectStrengthScore } from '../services/projectStrengthService';
 import { formatPrice } from '../utils/formatters';
 import { getTradeTypeInfo } from '../utils/tradeTypes';
 
-export type NavTab = 'home' | 'scanner' | 'active' | 'recommendations' | 'expert' | 'settings' | 'alerts' | 'performance' | 'journal';
+export type NavTab = 'home' | 'scanner' | 'scanner2' | 'active' | 'expert' | 'settings' | 'alerts' | 'performance' | 'journal';
 
 export function getTimeframeMinutes(tf: Timeframe): number {
   switch (tf) {
@@ -48,7 +50,7 @@ export function getTimeframeMinutes(tf: Timeframe): number {
   }
 }
 
-export const getActivePid = (id: PortfolioId | 'ALL'): PortfolioId => (id === 'ALL' ? 'PORTFOLIO_A' : id);
+export const getActivePid = (id: PortfolioId | 'ALL'): PortfolioId => (id === 'ALL' ? 'STRATEGY_TREND' : id);
 
 interface CryptoState {
   // Navigation & UI
@@ -192,7 +194,7 @@ export const useCryptoStore = create<CryptoState>()(
         set({ maxConcurrentTradesPerPortfolio: Math.min(30, Math.max(5, Math.round(limit))) }),
 
       // Backward-compatible accessors
-      paperAccount: initialPortfolios.PORTFOLIO_A.account,
+      paperAccount: initialPortfolios.STRATEGY_TREND.account,
       paperTrades: [],
       equityHistory: [],
       closedTradesHistory: [],
@@ -295,7 +297,7 @@ export const useCryptoStore = create<CryptoState>()(
           };
         }),
 
-      addPaperTrade: (trade, targetPortfolio = 'PORTFOLIO_A') =>
+      addPaperTrade: (trade, targetPortfolio: StrategyId = 'STRATEGY_TREND') =>
         set((s) => {
           const p = s.portfolios[targetPortfolio];
           const updatedTrades = [trade, ...p.trades];
@@ -408,20 +410,30 @@ export const useCryptoStore = create<CryptoState>()(
           timestamp: Date.now(),
         };
 
-        const pIds: PortfolioId[] = ['PORTFOLIO_A', 'PORTFOLIO_B', 'PORTFOLIO_C'];
+        // Strategy routing based on signal characteristics
+        let targetStrategies: StrategyId[] = [];
+        if (timeframe === '5m' || timeframe === '1m' || timeframe === '15m') {
+          targetStrategies = ['STRATEGY_SCALP'];
+        } else if ((pattern && pattern.toLowerCase().includes('breakout')) || typeInfo.label.includes('اختراق')) {
+          targetStrategies = ['STRATEGY_TREND'];
+        } else {
+          targetStrategies = ['STRATEGY_REVERSION'];
+        }
+
         const updatedPortfolios = { ...portfolios };
         let openedCount = 0;
 
-        pIds.forEach((pid) => {
+        targetStrategies.forEach((pid: StrategyId) => {
           const p = portfolios[pid];
-          const cfg = PORTFOLIO_CONFIGS[pid];
+          if (!p) return;
+          const cfg = STRATEGY_CONFIGS[pid];
 
-          const openTrades = p.trades.filter((t) => t.status === 'OPEN');
-          const marginUsed = openTrades.reduce((acc, t) => acc + t.margin, 0);
+          const openTrades = p.trades.filter((t: PaperTrade) => t.status === 'OPEN');
+          const marginUsed = openTrades.reduce((acc: number, t: PaperTrade) => acc + t.margin, 0);
           const availableBalance = Math.max(0, p.account.balance - marginUsed);
-          if (availableBalance < cfg.marginPerTrade) return;
+          if (availableBalance < (cfg?.marginPerTrade || 10)) return;
 
-          const alreadyOpen = openTrades.some((t) => t.symbol === symbol);
+          const alreadyOpen = openTrades.some((t: PaperTrade) => t.symbol === symbol);
           if (alreadyOpen) return;
 
           const newTrade = createPaperTradeForPortfolio(analysis, pid, timeframe, livePrice);
@@ -440,15 +452,15 @@ export const useCryptoStore = create<CryptoState>()(
           newTrade.patternNameArabic = patternNameArabic;
 
           openedCount++;
-          const newBalance = Math.max(0, Number((p.account.balance - 0.40).toFixed(2)));
-          let newTrades = [newTrade, ...p.trades.filter((t) => !(t.symbol === symbol && t.status === 'PENDING'))];
-          const activeOpen = newTrades.filter((t) => t.status === 'OPEN');
-          const newMarginUsed = activeOpen.reduce((acc, t) => acc + t.margin, 0);
-          const totalUnrealized = activeOpen.reduce((acc, t) => acc + (t.netPnl || 0), 0);
+          const newBalance = Math.max(0, Number((p.account.balance - 0.10).toFixed(2)));
+          let newTrades = [newTrade, ...p.trades.filter((t: PaperTrade) => !(t.symbol === symbol && t.status === 'PENDING'))];
+          const activeOpen = newTrades.filter((t: PaperTrade) => t.status === 'OPEN');
+          const newMarginUsed = activeOpen.reduce((acc: number, t: PaperTrade) => acc + t.margin, 0);
+          const totalUnrealized = activeOpen.reduce((acc: number, t: PaperTrade) => acc + (t.netPnl || 0), 0);
           const currentEquity = Math.max(0, Number((newBalance + totalUnrealized).toFixed(2)));
-          const totalExposure = activeOpen.length * 1000;
+          const totalExposure = activeOpen.length * 250;
 
-          newTrades = newTrades.map((t) => {
+          newTrades = newTrades.map((t: PaperTrade) => {
             if (t.status === 'OPEN') {
               const crossLiq = computeCrossLiquidation(
                 t.actualEntryPrice,
@@ -476,10 +488,10 @@ export const useCryptoStore = create<CryptoState>()(
             marginRatioPercent: Number(marginRatioPercent.toFixed(1)),
             totalTradesCount: p.account.totalTradesCount + 1,
             openPositionsCount: activeOpen.length,
-            pendingPositionsCount: newTrades.filter((t) => t.status === 'PENDING').length,
+            pendingPositionsCount: newTrades.filter((t: PaperTrade) => t.status === 'PENDING').length,
           };
 
-          updatedPortfolios[pid] = {
+          (updatedPortfolios as any)[pid] = {
             ...p,
             account: newAccount,
             trades: newTrades,
@@ -685,42 +697,37 @@ export const useCryptoStore = create<CryptoState>()(
           return false;
         }
 
-        // 2. Reject losing patterns (Only Retest, Breakout, Pullback allowed)
-        if ((analysis.setupPattern as string) === 'REVERSAL' || (analysis.setupPattern as string) === 'RANGE') {
+        // 2. Reject losing patterns
+        if ((analysis.setupPattern as string) === 'REVERSAL') {
           return false;
         }
 
-        // 3. Reject Moderate and Weak coins (< 60 points) based on CoinGecko analysis
+        // 3. Reject coins with low strength
         const projectStrength = getProjectStrengthScore(analysis.symbol);
-        if (projectStrength.totalScore < 60) {
+        if (projectStrength.totalScore < 50) {
           return false;
         }
 
         const score = analysis.scoreBreakdown?.totalScore ?? analysis.confidence;
-
-        // Ignore signals with score < 55
         if (score < 55) {
           return false;
         }
 
         const side = analysis.overallDirection === 'BULLISH' ? 'LONG' : 'SHORT';
 
-        // 3.5 Top-Down Macro Trend Filter (1D & 1W Rule):
-        // - افحص فريم اليومي (1D) والأسبوعي (1W) للعملة قبل فتح الصفقة
-        // - إذا كان 1D و 1W صاعدين: يُسمح فقط بصفقات Long
-        // - إذا كان 1D و 1W هابطين: يُسمح فقط بصفقات Short
-        // - إذا كانا متضاربين: يُرفض فتح الصفقة
-        if (analysis.macroTrend === 'CONFLICTING') {
-          return false;
-        }
-        if (side === 'LONG' && analysis.macroTrend !== 'BULLISH') {
-          return false;
-        }
-        if (side === 'SHORT' && analysis.macroTrend !== 'BEARISH') {
-          return false;
+        // 4. 4H Trend Filter (Trading Lab Rule: Replaces strict 1D & 1W blocking filters):
+        // Rejects only if 4H is strongly opposing the trade direction
+        const tf4h = analysis.timeframeResults?.['4h'];
+        if (tf4h) {
+          if (side === 'LONG' && tf4h.direction === 'هابط' && tf4h.strength === 'عالية') {
+            return false;
+          }
+          if (side === 'SHORT' && tf4h.direction === 'صاعد' && tf4h.strength === 'عالية') {
+            return false;
+          }
         }
 
-        // 4. Live Real-Time Price from WebSocket
+        // 5. Live Real-Time Price from WebSocket
         const livePrice = tickers[analysis.symbol]?.lastPrice || analysis.currentPrice || analysis.targets.entry;
 
         // Auto-resume from news pause if 15 minutes expired
@@ -731,162 +738,122 @@ export const useCryptoStore = create<CryptoState>()(
           effectiveNewsPaused = false;
         }
 
-        const pIds: PortfolioId[] = ['PORTFOLIO_A', 'PORTFOLIO_B', 'PORTFOLIO_C'];
-        const updatedPortfolios = { ...portfolios };
-        const executedPortfolios: string[] = [];
-        let anyExpired = false;
-        let lastCreatedTrade: PaperTrade | null = null;
-        let portfolioARejectedDueToLiq = false;
-        let portfolioARejectionReason = '';
-
-        pIds.forEach((pid) => {
-          const p = portfolios[pid];
-          const cfg = PORTFOLIO_CONFIGS[pid];
-          const slDist = Math.abs(analysis.targets.slPercent);
-          // Liquidation Protection and free margin check
-          const check = canOpenNewTrade(
-            analysis.symbol,
-            side,
-            analysis.setupPattern,
-            p.trades,
-            p.account,
-            marketRegime,
-            effectiveNewsPaused,
-            cfg.marginPerTrade,
-            score,
-            9999,
-            undefined,
-            pid,
-            slDist,
-            timeframe
-          );
-
-          if (!check.allowed) {
-            if (pid === 'PORTFOLIO_A' && (check.reason?.includes('حماية التصفية') || slDist > cfg.liquidationDistancePercent)) {
-              portfolioARejectedDueToLiq = true;
-              portfolioARejectionReason = check.reason || `مسافة الوقف (${slDist.toFixed(1)}%) أكبر من مسافة التصفية (${cfg.liquidationDistancePercent.toFixed(1)}%) للمحفظة A`;
-            }
-            return;
-          }
-
-          // Create trade using real live price and check 0.5% slippage
-          const newTrade = createPaperTradeForPortfolio(analysis, pid, timeframe, livePrice);
-          lastCreatedTrade = newTrade;
-
-          if (newTrade.status === 'EXPIRED') {
-            // Price moved > 0.5% from signal price -> Do NOT open trade, register as Expired
-            anyExpired = true;
-            const newTrades = [newTrade, ...p.trades];
-            updatedPortfolios[pid] = {
-              ...p,
-              trades: newTrades,
-            };
-            return;
-          }
-
-          executedPortfolios.push(cfg.shortName);
-
-          // Deduct $0.40 commission only if trade actually opens
-          const newBalance = Math.max(0, Number((p.account.balance - 0.40).toFixed(2)));
-
-          let newTrades = [newTrade, ...p.trades];
-          const activeOpen = newTrades.filter((t) => t.status === 'OPEN');
-          const marginUsed = activeOpen.reduce((acc, t) => acc + t.margin, 0);
-          const totalUnrealized = activeOpen.reduce((acc, t) => acc + (t.netPnl || 0), 0);
-          const currentEquity = Math.max(0, Number((newBalance + totalUnrealized).toFixed(2)));
-          const totalExposure = activeOpen.reduce((acc, t) => acc + (t.positionSize || 1000), 0);
-
-          // Recompute Cross liquidation for all open positions in this portfolio
-          newTrades = newTrades.map((t) => {
-            if (t.status === 'OPEN') {
-              const crossLiq = computeCrossLiquidation(
-                t.actualEntryPrice,
-                t.side,
-                currentEquity,
-                activeOpen.length,
-                t.positionSize
-              );
-              return {
-                ...t,
-                liquidationPrice: crossLiq.liquidationPrice,
-                liquidationDistancePercent: crossLiq.liquidationDistancePercent,
-                totalExposure,
-              };
-            }
-            return t;
-          });
-
-          const marginRatioPercent = newBalance > 0 ? (marginUsed / newBalance) * 100 : 0;
-
-          const newAccount: PaperAccount = {
-            ...p.account,
-            balance: newBalance,
-            equity: currentEquity,
-            marginUsed: Number(marginUsed.toFixed(2)),
-            marginRatioPercent: Number(marginRatioPercent.toFixed(1)),
-            totalTradesCount: p.account.totalTradesCount + 1,
-            openPositionsCount: activeOpen.length,
-            pendingPositionsCount: newTrades.filter((t) => t.status === 'PENDING').length,
-          };
-
-          updatedPortfolios[pid] = {
-            ...p,
-            account: newAccount,
-            trades: newTrades,
-          };
-        });
-
-        if (portfolioARejectedDueToLiq) {
-          const currentSig = get().signalCache[analysis.symbol] || analysis;
-          set((s) => ({
-            signalCache: {
-              ...s.signalCache,
-              [analysis.symbol]: {
-                ...currentSig,
-                portfolioARejected: true,
-                portfolioARejectionReason,
-              },
-            },
-          }));
+        // 6. Strategy Routing Logic (Trading Lab Rule 3):
+        // * Strategy 1: Trend Following (Breakouts)
+        // * Strategy 2: Mean Reversion (Retest / Range)
+        // * Strategy 3: Scalping (5m / 1m)
+        let targetStrategyId: PortfolioId = 'STRATEGY_TREND';
+        if (timeframe === '5m' || timeframe === '1m' || analysis.tradeType === 'SCALP') {
+          targetStrategyId = 'STRATEGY_SCALP';
+        } else if (analysis.setupPattern === 'BREAKOUT') {
+          targetStrategyId = 'STRATEGY_TREND';
+        } else {
+          targetStrategyId = 'STRATEGY_REVERSION';
         }
 
-        if (executedPortfolios.length > 0) {
-          const activePid = getActivePid(get().activePortfolioId);
-          set({
-            portfolios: updatedPortfolios,
-            paperTrades: updatedPortfolios[activePid].trades,
-            paperAccount: updatedPortfolios[activePid].account,
-            equityHistory: updatedPortfolios[activePid].equityHistory,
-          });
+        const p = portfolios[targetStrategyId];
+        if (!p) return false;
+        const cfg = PORTFOLIO_CONFIGS[targetStrategyId];
+        const slDist = Math.abs(analysis.targets.slPercent);
 
-          if (lastCreatedTrade) {
-            const t = lastCreatedTrade as PaperTrade;
-            const liqNote = portfolioARejectedDueToLiq ? ' • ⚠️ تم تجاوز المحفظة A (حماية التصفية)' : '';
-            sendTradingNotification(
-              `دخول حقيقي في المحافظ [${executedPortfolios.join(', ')}]: ${analysis.symbol} ⚡`,
-              `سعر الإشارة: ${formatPrice(t.signalPrice)} | سعر الدخول الفعلي: ${formatPrice(t.actualEntryPrice)} • ${t.slCalculationReason || 'SL: ATR × 1.5'}${liqNote}`,
-              soundEnabled
-            );
-          }
-          return true;
-        }
+        const check = canOpenNewTrade(
+          analysis.symbol,
+          side,
+          analysis.setupPattern,
+          p.trades,
+          p.account,
+          marketRegime,
+          effectiveNewsPaused,
+          cfg.marginPerTrade,
+          score,
+          9999,
+          undefined,
+          targetStrategyId,
+          slDist,
+          timeframe
+        );
 
-        if (anyExpired && lastCreatedTrade) {
-          const activePid = getActivePid(get().activePortfolioId);
-          set({
-            portfolios: updatedPortfolios,
-            paperTrades: updatedPortfolios[activePid].trades,
-          });
-          const t = lastCreatedTrade as PaperTrade;
-          sendTradingNotification(
-            `فاتت الصفقة (Expired): ${analysis.symbol} ⏱️`,
-            `تحرك السعر (${t.priceDiffPercent}%) بأكثر من 0.5% عن سعر الإشارة (${formatPrice(t.signalPrice)} vs ${formatPrice(t.actualEntryPrice)})`,
-            soundEnabled
-          );
+        if (!check.allowed) {
           return false;
         }
 
-        return false;
+        // Create trade for target strategy
+        const newTrade = createPaperTradeForPortfolio(analysis, targetStrategyId, timeframe, livePrice);
+        const updatedPortfolios = { ...portfolios };
+
+        if (newTrade.status === 'EXPIRED') {
+          updatedPortfolios[targetStrategyId] = {
+            ...p,
+            trades: [newTrade, ...p.trades],
+          };
+          set({ portfolios: updatedPortfolios });
+          return false;
+        }
+
+        // Fixed 25x, 1% risk per trade commission: $0.10 round trip for 250 position size
+        const newBalance = Math.max(0, Number((p.account.balance - 0.10).toFixed(2)));
+
+        let newTrades = [newTrade, ...p.trades];
+        const activeOpen = newTrades.filter((t) => t.status === 'OPEN');
+        const marginUsed = activeOpen.reduce((acc, t) => acc + t.margin, 0);
+        const totalUnrealized = activeOpen.reduce((acc, t) => acc + (t.netPnl || 0), 0);
+        const currentEquity = Math.max(0, Number((newBalance + totalUnrealized).toFixed(2)));
+        const totalExposure = activeOpen.length * 250;
+
+        // Recompute Cross liquidation for open positions in this strategy
+        newTrades = newTrades.map((t) => {
+          if (t.status === 'OPEN') {
+            const crossLiq = computeCrossLiquidation(
+              t.actualEntryPrice,
+              t.side,
+              currentEquity,
+              activeOpen.length,
+              t.positionSize
+            );
+            return {
+              ...t,
+              liquidationPrice: crossLiq.liquidationPrice,
+              liquidationDistancePercent: crossLiq.liquidationDistancePercent,
+              totalExposure,
+            };
+          }
+          return t;
+        });
+
+        const marginRatioPercent = newBalance > 0 ? (marginUsed / newBalance) * 100 : 0;
+
+        const newAccount: PaperAccount = {
+          ...p.account,
+          balance: newBalance,
+          equity: currentEquity,
+          marginUsed: Number(marginUsed.toFixed(2)),
+          marginRatioPercent: Number(marginRatioPercent.toFixed(1)),
+          totalTradesCount: p.account.totalTradesCount + 1,
+          openPositionsCount: activeOpen.length,
+          pendingPositionsCount: newTrades.filter((t) => t.status === 'PENDING').length,
+        };
+
+        updatedPortfolios[targetStrategyId] = {
+          ...p,
+          account: newAccount,
+          trades: newTrades,
+        };
+
+        const activePid = getActivePid(get().activePortfolioId);
+        set({
+          portfolios: updatedPortfolios,
+          paperTrades: updatedPortfolios[activePid].trades,
+          paperAccount: updatedPortfolios[activePid].account,
+          equityHistory: updatedPortfolios[activePid].equityHistory,
+        });
+
+        sendTradingNotification(
+          `[${cfg.shortName}] فتح صفقة ${analysis.symbol} ${side === 'LONG' ? '🟢 شراء' : '🔴 بيع'}!`,
+          `استراتيجية: ${cfg.nameArabic} • دخول: $${formatPrice(newTrade.actualEntryPrice)} • رافعة 25x • مخاطرة 1%`,
+          soundEnabled
+        );
+
+        return true;
       },
 
       /**
@@ -1360,14 +1327,15 @@ export const useCryptoStore = create<CryptoState>()(
           const data = JSON.parse(jsonStr);
           if (data && data.app === 'CryptoSignalsPro') {
             const importedPortfolios = data.portfolios || createInitialPortfolios();
+            const activePid = getActivePid(get().activePortfolioId);
             set({
               watchlist: Array.isArray(data.watchlist) ? data.watchlist : get().watchlist,
               tradeJournal: Array.isArray(data.tradeJournal) ? data.tradeJournal : get().tradeJournal,
               alerts: Array.isArray(data.alerts) ? data.alerts : get().alerts,
               portfolios: importedPortfolios,
-              paperAccount: importedPortfolios.PORTFOLIO_A.account,
-              paperTrades: importedPortfolios.PORTFOLIO_A.trades,
-              equityHistory: importedPortfolios.PORTFOLIO_A.equityHistory,
+              paperAccount: (importedPortfolios[activePid] || importedPortfolios.STRATEGY_TREND).account,
+              paperTrades: (importedPortfolios[activePid] || importedPortfolios.STRATEGY_TREND).trades,
+              equityHistory: (importedPortfolios[activePid] || importedPortfolios.STRATEGY_TREND).equityHistory,
             });
             return true;
           }
@@ -1379,11 +1347,12 @@ export const useCryptoStore = create<CryptoState>()(
 
       /**
        * Thorough data clearance: removes localStorage and resets to clean state
-       * with NO sample trades, NO historical noise, 100% clean portfolios
+       * with NO sample trades, NO historical noise, 100% clean portfolios (Trading Lab: 3 Strategies)
        */
       clearAllUserData: () => {
         try {
           if (typeof window !== 'undefined' && window.localStorage) {
+            window.localStorage.removeItem('crypto-signals-pro-v10-trading-lab');
             window.localStorage.removeItem('crypto-signals-pro-v9-clean-atr15-60plus');
             window.localStorage.removeItem('crypto-signals-pro-v8-clean-rules');
             window.localStorage.removeItem('crypto-signals-pro-v7-pure-cross-1000');
@@ -1406,8 +1375,8 @@ export const useCryptoStore = create<CryptoState>()(
           alerts: [],
           signalCache: {},
           portfolios: freshPortfolios,
-          activePortfolioId: 'ALL',
-          paperAccount: freshPortfolios.PORTFOLIO_A.account,
+          activePortfolioId: 'STRATEGY_TREND',
+          paperAccount: freshPortfolios.STRATEGY_TREND.account,
           paperTrades: [],
           equityHistory: [],
           closedTradesHistory: [],
@@ -1415,8 +1384,20 @@ export const useCryptoStore = create<CryptoState>()(
       },
     }),
     {
-      name: 'crypto-signals-pro-v9-clean-atr15-60plus',
-      version: 9,
+      name: 'crypto-signals-pro-v10-trading-lab',
+      version: 10,
+      migrate: (persistedState: any, version: number) => {
+        if (version < 10 || !persistedState?.portfolios?.STRATEGY_TREND) {
+          const freshPortfolios = createInitialPortfolios();
+          return {
+            ...persistedState,
+            portfolios: freshPortfolios,
+            activePortfolioId: 'STRATEGY_TREND',
+            closedTradesHistory: [],
+          };
+        }
+        return persistedState;
+      },
       partialize: (state) => ({
         watchlist: state.watchlist,
         tradeJournal: state.tradeJournal,

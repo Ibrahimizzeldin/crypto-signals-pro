@@ -1,7 +1,7 @@
 import React, { useState, useMemo } from 'react';
 import { useCryptoStore } from '../../store/useCryptoStore';
-import { PortfolioId, PaperTrade } from '../../types/crypto';
-import { PORTFOLIO_CONFIGS } from '../../services/paperTradingEngine';
+import { StrategyId, PaperTrade } from '../../types/crypto';
+import { STRATEGY_CONFIGS } from '../../services/paperTradingEngine';
 import { CoinIcon } from '../common/CoinIcon';
 import { getPatternEmoji } from '../../utils/cryptoLogos';
 import {
@@ -29,18 +29,18 @@ export const JournalView: React.FC<JournalViewProps> = () => {
     wsConnected,
   } = useCryptoStore();
 
-  const [selectedPortfolio, setSelectedPortfolio] = useState<PortfolioId | 'ALL'>('ALL');
+  const [selectedPortfolio, setSelectedPortfolio] = useState<StrategyId | 'ALL'>('ALL');
 
   // Extract all open paper trades across portfolios
   const allOpenTrades = useMemo(() => {
     const tradesWithLivePrice: (PaperTrade & { livePrice: number; portfolioLabel: string; badgeColor: string })[] = [];
 
-    const pids: PortfolioId[] = ['PORTFOLIO_A', 'PORTFOLIO_B', 'PORTFOLIO_C'];
+    const pids: StrategyId[] = ['STRATEGY_TREND', 'STRATEGY_REVERSION', 'STRATEGY_SCALP'];
 
     pids.forEach((pid) => {
       const p = portfolios[pid];
       if (!p) return;
-      const cfg = PORTFOLIO_CONFIGS[pid];
+      const cfg = STRATEGY_CONFIGS[pid];
 
       p.trades.forEach((trade) => {
         if (trade.status === 'OPEN') {
@@ -124,15 +124,15 @@ export const JournalView: React.FC<JournalViewProps> = () => {
           </div>
         </div>
 
-        {/* Portfolio Filter Pills */}
+        {/* Strategy Filter Pills */}
         <div className="flex items-center gap-2 pt-2 border-t border-slate-800/80">
-          <span className="text-xs text-slate-400 font-bold ml-1">تصفية حسب المحفظة:</span>
-          {(['ALL', 'PORTFOLIO_A', 'PORTFOLIO_B', 'PORTFOLIO_C'] as const).map((pid) => {
+          <span className="text-xs text-slate-400 font-bold ml-1">تصفية حسب الاستراتيجية:</span>
+          {(['ALL', 'STRATEGY_TREND', 'STRATEGY_REVERSION', 'STRATEGY_SCALP'] as const).map((pid) => {
             const isSelected = selectedPortfolio === pid;
             const label =
               pid === 'ALL'
-                ? `جميع المحافظ (${totalOpen})`
-                : `${PORTFOLIO_CONFIGS[pid].shortName} (${
+                ? `جميع الاستراتيجيات (${totalOpen})`
+                : `${STRATEGY_CONFIGS[pid].shortName} (${
                     allOpenTrades.filter((t) => t.portfolioId === pid).length
                   })`;
 
@@ -225,15 +225,11 @@ export const JournalView: React.FC<JournalViewProps> = () => {
                     </span>
                   </div>
 
-                  {/* Manual Close Button */}
-                  <button
-                    onClick={() => handleCloseTrade(trade.id, trade.livePrice)}
-                    disabled={closingTradeId === trade.id}
-                    className="flex items-center gap-1.5 px-3 py-1 rounded-xl bg-rose-600/20 hover:bg-rose-600 text-rose-300 hover:text-white border border-rose-500/30 hover:border-rose-600 text-xs font-bold transition disabled:opacity-50"
-                  >
-                    <XCircle className="w-3.5 h-3.5" />
-                    <span>{closingTradeId === trade.id ? 'جاري الإغلاق...' : 'إغلاق يدوي'}</span>
-                  </button>
+                  {/* Automated Execution Badge */}
+                  <span className="flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 text-xs font-bold font-sans">
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                    <span>إغلاق آلي (TP/SL)</span>
+                  </span>
                 </div>
 
                 {/* Liquidation vs SL Distance & Cross Exposure */}

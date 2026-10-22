@@ -1,7 +1,7 @@
 import React, { useState, useMemo } from 'react';
 import { useCryptoStore } from '../../store/useCryptoStore';
-import { SetupPattern, Timeframe, PaperTrade, PortfolioId } from '../../types/crypto';
-import { PORTFOLIO_CONFIGS } from '../../services/paperTradingEngine';
+import { SetupPattern, Timeframe, PaperTrade, StrategyId } from '../../types/crypto';
+import { STRATEGY_CONFIGS } from '../../services/paperTradingEngine';
 import { exportTradesToCSV, exportWeeklyPDFReport } from '../../utils/reportsExporter';
 import { formatPrice } from '../../utils/formatters';
 import {
@@ -54,9 +54,9 @@ export const PerformanceView: React.FC = () => {
     setTimeout(() => setActionMessage(null), 3500);
   };
 
-  // Compute detailed statistics for each portfolio
+  // Compute detailed statistics for each strategy
   const portfolioStats = useMemo(() => {
-    const pIds: PortfolioId[] = ['PORTFOLIO_A', 'PORTFOLIO_B', 'PORTFOLIO_C'];
+    const pIds: StrategyId[] = ['STRATEGY_TREND', 'STRATEGY_REVERSION', 'STRATEGY_SCALP'];
 
     const computed = pIds.map((pid) => {
       const p = portfolios[pid];
@@ -124,7 +124,7 @@ export const PerformanceView: React.FC = () => {
 
       return {
         id: pid,
-        config: PORTFOLIO_CONFIGS[pid],
+        config: STRATEGY_CONFIGS[pid],
         account: {
           ...p.account,
           equity: liveEquity,
@@ -154,7 +154,7 @@ export const PerformanceView: React.FC = () => {
       };
     });
 
-    // Identify the best performing portfolio based on net PnL (or lowest liquidations / drawdown if tied)
+    // Identify the best performing strategy based on net PnL (or lowest liquidations / drawdown if tied)
     let best = computed[0];
     computed.forEach((p) => {
       if (p.netPnl > best.netPnl) {
@@ -168,21 +168,21 @@ export const PerformanceView: React.FC = () => {
       list: computed,
       bestId: computed.some((p) => p.closedCount > 0 || p.openCount > 0) ? best.id : null,
       map: {
-        PORTFOLIO_A: computed[0],
-        PORTFOLIO_B: computed[1],
-        PORTFOLIO_C: computed[2],
-      },
+        STRATEGY_TREND: computed[0],
+        STRATEGY_REVERSION: computed[1],
+        STRATEGY_SCALP: computed[2],
+      } as Record<StrategyId, typeof computed[0]>,
     };
   }, [portfolios]);
 
   // Current trades being viewed based on active tab
   const displayedTrades = useMemo(() => {
     if (activePortfolioId === 'ALL') {
-      // Combined trades from all portfolios
+      // Combined trades from all strategies
       return [
-        ...portfolios.PORTFOLIO_A.trades,
-        ...portfolios.PORTFOLIO_B.trades,
-        ...portfolios.PORTFOLIO_C.trades,
+        ...(portfolios.STRATEGY_TREND?.trades || []),
+        ...(portfolios.STRATEGY_REVERSION?.trades || []),
+        ...(portfolios.STRATEGY_SCALP?.trades || []),
       ];
     }
     return portfolios[activePortfolioId]?.trades || [];
@@ -247,8 +247,8 @@ export const PerformanceView: React.FC = () => {
   };
 
   const handleExportPDF = () => {
-    const targetAccount = activePortfolioId === 'ALL' ? portfolios.PORTFOLIO_A.account : portfolios[activePortfolioId].account;
-    const targetStats = activePortfolioId === 'ALL' ? portfolioStats.map.PORTFOLIO_A : portfolioStats.map[activePortfolioId];
+    const targetAccount = activePortfolioId === 'ALL' || !portfolios[activePortfolioId] ? portfolios.STRATEGY_TREND.account : portfolios[activePortfolioId].account;
+    const targetStats = activePortfolioId === 'ALL' || !portfolioStats.map[activePortfolioId] ? portfolioStats.map.STRATEGY_TREND : portfolioStats.map[activePortfolioId];
     exportWeeklyPDFReport(targetAccount, displayedTrades, {
       winRate: targetStats.winRate,
       profitFactor: parseFloat(targetStats.profitFactor) || (targetStats.profitFactor === '∞' ? 9.99 : 0),
@@ -325,15 +325,15 @@ export const PerformanceView: React.FC = () => {
           <div className="flex flex-wrap items-center gap-2 self-start md:self-auto">
             {/* Auto Trading Status Badge */}
             <button
-              onClick={() => setAutoTradingEnabled(!portfolios.PORTFOLIO_A.account.autoTradingEnabled)}
+              onClick={() => setAutoTradingEnabled(!portfolios.STRATEGY_TREND.account.autoTradingEnabled)}
               className={`px-3 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1.5 border transition ${
-                portfolios.PORTFOLIO_A.account.autoTradingEnabled
+                portfolios.STRATEGY_TREND.account.autoTradingEnabled
                   ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30 hover:bg-emerald-500/25'
                   : 'bg-slate-800 text-slate-400 border-slate-700 hover:bg-slate-700'
               }`}
             >
-              <div className={`w-2 h-2 rounded-full ${portfolios.PORTFOLIO_A.account.autoTradingEnabled ? 'bg-emerald-400 animate-pulse' : 'bg-slate-500'}`} />
-              <span>{portfolios.PORTFOLIO_A.account.autoTradingEnabled ? 'التداول التلقائي: نشط' : 'التداول التلقائي: متوقف'}</span>
+              <div className={`w-2 h-2 rounded-full ${portfolios.STRATEGY_TREND.account.autoTradingEnabled ? 'bg-emerald-400 animate-pulse' : 'bg-slate-500'}`} />
+              <span>{portfolios.STRATEGY_TREND.account.autoTradingEnabled ? 'التداول التلقائي: نشط' : 'التداول التلقائي: متوقف'}</span>
             </button>
 
             {/* Clear All Data */}
@@ -846,8 +846,8 @@ export const PerformanceView: React.FC = () => {
         {/* 3 Portfolio Liquidation Cards */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-2.5">
           {portfolioStats.list.map((p) => {
-            const isHighRisk = p.id === 'PORTFOLIO_A';
-            const isMediumRisk = p.id === 'PORTFOLIO_B';
+            const isHighRisk = p.id === 'STRATEGY_SCALP';
+            const isMediumRisk = p.id === 'STRATEGY_TREND';
             return (
               <div
                 key={p.id}
@@ -932,43 +932,43 @@ export const PerformanceView: React.FC = () => {
           }`}
         >
           <Layers className="w-3.5 h-3.5" />
-          <span>مقارنة المحافظ الثلاث (شامل)</span>
+          <span>مقارنة الاستراتيجيات الثلاث (شامل)</span>
         </button>
 
         <button
-          onClick={() => setActivePortfolioId('PORTFOLIO_A')}
+          onClick={() => setActivePortfolioId('STRATEGY_TREND')}
           className={`flex-1 py-2 px-3 rounded-lg font-bold transition flex items-center justify-center gap-1.5 whitespace-nowrap ${
-            activePortfolioId === 'PORTFOLIO_A'
-              ? 'bg-rose-600 text-white shadow'
+            activePortfolioId === 'STRATEGY_TREND'
+              ? 'bg-indigo-600 text-white shadow'
               : 'text-slate-400 hover:text-white hover:bg-slate-800'
           }`}
         >
-          <Flame className="w-3.5 h-3.5 text-rose-400" />
-          <span>المحفظة A (100x)</span>
+          <Flame className="w-3.5 h-3.5 text-indigo-400" />
+          <span>تتبع الترند (Trend 25x)</span>
         </button>
 
         <button
-          onClick={() => setActivePortfolioId('PORTFOLIO_B')}
+          onClick={() => setActivePortfolioId('STRATEGY_REVERSION')}
           className={`flex-1 py-2 px-3 rounded-lg font-bold transition flex items-center justify-center gap-1.5 whitespace-nowrap ${
-            activePortfolioId === 'PORTFOLIO_B'
+            activePortfolioId === 'STRATEGY_REVERSION'
+              ? 'bg-cyan-600 text-white shadow'
+              : 'text-slate-400 hover:text-white hover:bg-slate-800'
+          }`}
+        >
+          <Activity className="w-3.5 h-3.5 text-cyan-400" />
+          <span>الارتداد (Reversion 25x)</span>
+        </button>
+
+        <button
+          onClick={() => setActivePortfolioId('STRATEGY_SCALP')}
+          className={`flex-1 py-2 px-3 rounded-lg font-bold transition flex items-center justify-center gap-1.5 whitespace-nowrap ${
+            activePortfolioId === 'STRATEGY_SCALP'
               ? 'bg-amber-600 text-white shadow'
               : 'text-slate-400 hover:text-white hover:bg-slate-800'
           }`}
         >
-          <Activity className="w-3.5 h-3.5 text-amber-400" />
-          <span>المحفظة B (50x)</span>
-        </button>
-
-        <button
-          onClick={() => setActivePortfolioId('PORTFOLIO_C')}
-          className={`flex-1 py-2 px-3 rounded-lg font-bold transition flex items-center justify-center gap-1.5 whitespace-nowrap ${
-            activePortfolioId === 'PORTFOLIO_C'
-              ? 'bg-emerald-600 text-white shadow'
-              : 'text-slate-400 hover:text-white hover:bg-slate-800'
-          }`}
-        >
-          <ShieldAlert className="w-3.5 h-3.5 text-emerald-400" />
-          <span>المحفظة C (25x)</span>
+          <ShieldAlert className="w-3.5 h-3.5 text-amber-400" />
+          <span>المضاربة السريعة (Scalp 25x)</span>
         </button>
       </div>
 
@@ -978,25 +978,32 @@ export const PerformanceView: React.FC = () => {
         <div className="bg-[#121824] border border-slate-800 rounded-xl p-3">
           <span className="text-[11px] text-slate-400 block mb-1">الرصيد والسيولة</span>
           <div className="text-lg font-black text-white font-num">
-            ${(activePortfolioId === 'ALL' ? portfolioStats.map.PORTFOLIO_A.account.equity : portfolios[activePortfolioId].account.equity).toFixed(2)}
+            ${(activePortfolioId === 'ALL' || !portfolios[activePortfolioId] ? portfolioStats.map.STRATEGY_TREND.account.equity : portfolios[activePortfolioId].account.equity).toFixed(2)}
           </div>
           <span className="text-[10px] text-slate-500 font-num">
-            الهامش المستخدم: ${(activePortfolioId === 'ALL' ? portfolioStats.map.PORTFOLIO_A.account.marginUsed : portfolios[activePortfolioId].account.marginUsed).toFixed(2)}
+            الهامش المستخدم: ${(activePortfolioId === 'ALL' || !portfolios[activePortfolioId] ? portfolioStats.map.STRATEGY_TREND.account.marginUsed : portfolios[activePortfolioId].account.marginUsed).toFixed(2)}
           </span>
         </div>
 
         {/* Net PnL */}
         <div className="bg-[#121824] border border-slate-800 rounded-xl p-3">
           <span className="text-[11px] text-slate-400 block mb-1">صافي الأرباح الصافية</span>
-          <div className={`text-lg font-black font-num ${
-            (activePortfolioId === 'ALL' ? portfolioStats.map.PORTFOLIO_A.netPnl : portfolioStats.map[activePortfolioId].netPnl) >= 0 ? 'text-emerald-400' : 'text-rose-400'
-          }`}>
-            {(activePortfolioId === 'ALL' ? portfolioStats.map.PORTFOLIO_A.netPnl : portfolioStats.map[activePortfolioId].netPnl) >= 0 ? '+' : ''}
-            {(activePortfolioId === 'ALL' ? portfolioStats.map.PORTFOLIO_A.netPnl : portfolioStats.map[activePortfolioId].netPnl)} USDT
-          </div>
-          <span className="text-[10px] text-slate-500 font-num">
-            {(activePortfolioId === 'ALL' ? portfolioStats.map.PORTFOLIO_A.netPnlPercent : portfolioStats.map[activePortfolioId].netPnlPercent)}% من رأس المال
-          </span>
+          {(() => {
+            const currentStat = activePortfolioId === 'ALL' || !portfolioStats.map[activePortfolioId] ? portfolioStats.map.STRATEGY_TREND : portfolioStats.map[activePortfolioId];
+            return (
+              <>
+                <div className={`text-lg font-black font-num ${
+                  currentStat.netPnl >= 0 ? 'text-emerald-400' : 'text-rose-400'
+                }`}>
+                  {currentStat.netPnl >= 0 ? '+' : ''}
+                  {currentStat.netPnl} USDT
+                </div>
+                <span className="text-[10px] text-slate-500 font-num">
+                  {currentStat.netPnlPercent}% من رأس المال
+                </span>
+              </>
+            );
+          })()}
         </div>
 
         {/* Win Rate */}
@@ -1005,26 +1012,40 @@ export const PerformanceView: React.FC = () => {
             <span className="text-[11px] text-slate-400 block">Win Rate الكلي</span>
             <span className="text-[9px] px-1.5 py-0.2 rounded bg-emerald-500/10 text-emerald-400 font-bold">شامل العائم</span>
           </div>
-          <div className="text-lg font-black text-white font-num">
-            {(activePortfolioId === 'ALL' ? portfolioStats.map.PORTFOLIO_A.totalWinRate : portfolioStats.map[activePortfolioId].totalWinRate)}%
-          </div>
-          <div className="flex items-center justify-between text-[10px] text-slate-500 font-num mt-1">
-            <span>على المغلقة: {(activePortfolioId === 'ALL' ? portfolioStats.map.PORTFOLIO_A.closedWinRate : portfolioStats.map[activePortfolioId].closedWinRate)}%</span>
-            <span>الربح: {(activePortfolioId === 'ALL' ? portfolioStats.map.PORTFOLIO_A.profitFactor : portfolioStats.map[activePortfolioId].profitFactor)}</span>
-          </div>
+          {(() => {
+            const currentStat = activePortfolioId === 'ALL' || !portfolioStats.map[activePortfolioId] ? portfolioStats.map.STRATEGY_TREND : portfolioStats.map[activePortfolioId];
+            return (
+              <>
+                <div className="text-lg font-black text-white font-num">
+                  {currentStat.totalWinRate}%
+                </div>
+                <div className="flex items-center justify-between text-[10px] text-slate-500 font-num mt-1">
+                  <span>على المغلقة: {currentStat.closedWinRate}%</span>
+                  <span>الربح: {currentStat.profitFactor}</span>
+                </div>
+              </>
+            );
+          })()}
         </div>
 
         {/* Liquidations */}
         <div className="bg-[#121824] border border-slate-800 rounded-xl p-3">
           <span className="text-[11px] text-slate-400 block mb-1">عدد التصفيات (Liquidated)</span>
-          <div className={`text-lg font-black font-num ${
-            (activePortfolioId === 'ALL' ? portfolioStats.map.PORTFOLIO_A.liquidationsCount : portfolioStats.map[activePortfolioId].liquidationsCount) > 0 ? 'text-rose-400 animate-pulse' : 'text-emerald-400'
-          }`}>
-            {(activePortfolioId === 'ALL' ? portfolioStats.map.PORTFOLIO_A.liquidationsCount : portfolioStats.map[activePortfolioId].liquidationsCount)}
-          </div>
-          <span className="text-[10px] text-slate-500 font-num">
-            خسارة 100% من الهامش
-          </span>
+          {(() => {
+            const currentStat = activePortfolioId === 'ALL' || !portfolioStats.map[activePortfolioId] ? portfolioStats.map.STRATEGY_TREND : portfolioStats.map[activePortfolioId];
+            return (
+              <>
+                <div className={`text-lg font-black font-num ${
+                  currentStat.liquidationsCount > 0 ? 'text-rose-400 animate-pulse' : 'text-emerald-400'
+                }`}>
+                  {currentStat.liquidationsCount}
+                </div>
+                <span className="text-[10px] text-slate-500 font-num">
+                  خسارة 100% من الهامش
+                </span>
+              </>
+            );
+          })()}
         </div>
       </div>
 
@@ -1043,7 +1064,7 @@ export const PerformanceView: React.FC = () => {
         {currentOpenTrades.length === 0 ? (
           <div className="p-6 text-center rounded-xl bg-slate-900/40 border border-slate-800/80">
             <Clock className="w-8 h-8 text-slate-600 mx-auto mb-2" />
-            <p className="text-xs text-slate-400 font-bold">لا توجد صفقات مفتوحة حالياً في هذه المحفظة</p>
+            <p className="text-xs text-slate-400 font-bold">لا توجد صفقات مفتوحة حالياً في هذه الاستراتيجية</p>
             <p className="text-[11px] text-slate-500 mt-1">
               عند ظهور إشارة معتمدة ستفتح الصفقة تلقائياً بأسعار البث الحي لـ Binance Futures
             </p>
@@ -1052,7 +1073,7 @@ export const PerformanceView: React.FC = () => {
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
             {currentOpenTrades.map((t) => {
               const isProfit = t.netPnl >= 0;
-              const portConfig = t.portfolioId ? PORTFOLIO_CONFIGS[t.portfolioId] : PORTFOLIO_CONFIGS.PORTFOLIO_A;
+              const portConfig = t.portfolioId ? STRATEGY_CONFIGS[t.portfolioId as StrategyId] : STRATEGY_CONFIGS.STRATEGY_TREND;
 
               // Distance to liquidation price
               const distToLiqPct = t.currentPrice > 0
@@ -1172,7 +1193,7 @@ export const PerformanceView: React.FC = () => {
 
                   {/* Trade Details: Size in Dollar, Reserved Margin, Remaining Balance (Prompt Requirements) */}
                   {(() => {
-                    const portState = t.portfolioId ? portfolios[t.portfolioId] : null;
+                    const portState = t.portfolioId ? portfolios[t.portfolioId as StrategyId] : null;
                     const bal = portState?.account?.balance ?? 100;
                     const used = portState?.account?.marginUsed ?? t.margin;
                     const remainingBal = Math.max(0, bal - used);
@@ -1329,7 +1350,7 @@ export const PerformanceView: React.FC = () => {
                 {filteredClosedTrades.map((t) => {
                   const isProfit = t.netPnl > 0;
                   const isLiq = t.closeReason === 'LIQUIDATED';
-                  const portConfig = t.portfolioId ? PORTFOLIO_CONFIGS[t.portfolioId] : PORTFOLIO_CONFIGS.PORTFOLIO_A;
+                  const portConfig = t.portfolioId ? STRATEGY_CONFIGS[t.portfolioId as StrategyId] : STRATEGY_CONFIGS.STRATEGY_TREND;
 
                   return (
                     <tr key={t.id} className="hover:bg-slate-800/30 transition">

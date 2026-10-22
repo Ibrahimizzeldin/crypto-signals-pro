@@ -1,9 +1,10 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { useCryptoStore } from '../../store/useCryptoStore';
-import { SetupPattern, Timeframe, PortfolioId } from '../../types/crypto';
+import { SetupPattern, Timeframe, StrategyId } from '../../types/crypto';
 import { scannerEngine, ScannerProgress } from '../../services/scannerEngine';
 import {
   ScanLine,
+  Radar,
   Filter,
   ArrowUpDown,
   TrendingUp,
@@ -31,15 +32,17 @@ import { BtcCorrelationCategory } from '../../types/crypto';
 import { getProjectStrengthScore } from '../../services/projectStrengthService';
 import { getTradeTypeInfo } from '../../utils/tradeTypes';
 
-export const ScannerView: React.FC = () => {
+interface ScannerViewProps {
+  scannerId?: 1 | 2;
+}
+
+export const ScannerView: React.FC<ScannerViewProps> = ({ scannerId = 1 }) => {
   const {
     tickers,
     signalCache,
     setSelectedSymbol,
     setDetailModalOpen,
-    openTradeManually,
     portfolios,
-    setActiveTab,
     marketRegime,
   } = useCryptoStore();
 
@@ -57,8 +60,10 @@ export const ScannerView: React.FC = () => {
   // Expandable score breakdown for specific symbol
   const [expandedSymbol, setExpandedSymbol] = useState<string | null>(null);
 
-  // Scanner Progress from background engine
+  // Scanner Progress from background engine for this specific worker
   const [scanProgress, setScanProgress] = useState<ScannerProgress>({
+    scannerId,
+    symbols: [],
     isScanning: false,
     scannedCount: 0,
     totalEligible: 0,
@@ -71,11 +76,12 @@ export const ScannerView: React.FC = () => {
   const [scanningSingleSymbol, setScanningSingleSymbol] = useState<string | null>(null);
 
   useEffect(() => {
-    const unsub = scannerEngine.subscribeProgress((p) => {
-      setScanProgress(p);
-    });
+    const unsub =
+      scannerId === 1
+        ? scannerEngine.subscribeProgress1((p) => setScanProgress(p))
+        : scannerEngine.subscribeProgress2((p) => setScanProgress(p));
     return unsub;
-  }, []);
+  }, [scannerId]);
 
   const handleManualScanSymbol = async (sym: string, e: React.MouseEvent) => {
     e.stopPropagation();
@@ -114,7 +120,7 @@ export const ScannerView: React.FC = () => {
     }
   };
 
-  // Compile full universe of Binance Futures symbols with volume >= 3M USDT
+  // Compile universe of Binance Futures symbols with volume >= 3M USDT split into 2 halves
   const allEligibleSymbols = useMemo(() => {
     const tickerList = Object.values(tickers).filter(
       (t) => t.symbol.endsWith('USDT') && t.quoteVolume >= 3000000
@@ -123,8 +129,10 @@ export const ScannerView: React.FC = () => {
     // If tickers haven't populated yet, return empty list
     if (tickerList.length === 0) return [];
 
-    return tickerList.sort((a, b) => b.quoteVolume - a.quoteVolume);
-  }, [tickers]);
+    const sorted = tickerList.sort((a, b) => b.quoteVolume - a.quoteVolume);
+    const half = Math.ceil(sorted.length / 2);
+    return scannerId === 1 ? sorted.slice(0, half) : sorted.slice(half);
+  }, [tickers, scannerId]);
 
   // Compile and filter scanned opportunities
   const scannedItems = useMemo(() => {
@@ -321,15 +329,28 @@ export const ScannerView: React.FC = () => {
       <div className="bg-[#121824] border border-slate-800 rounded-2xl p-4 shadow-xl">
         <div className="flex items-center justify-between mb-2">
           <div className="flex items-center gap-2">
-            <ScanLine className="w-5 h-5 text-emerald-400" />
-            <h2 className="text-sm font-black text-white">
-              ماسح Binance Futures الذكي (بنظام 100 نقطة)
-            </h2>
+            {scannerId === 1 ? (
+              <ScanLine className="w-5 h-5 text-emerald-400" />
+            ) : (
+              <Radar className="w-5 h-5 text-cyan-400" />
+            )}
+            <div>
+              <h2 className="text-sm font-black text-white">
+                {scannerId === 1
+                  ? 'الماسح 1 (Scanner 1) • النصف الأول'
+                  : 'الماسح 2 (Scanner 2) • النصف الثاني'}
+              </h2>
+              <span className="text-[10px] text-slate-400">
+                {scannerId === 1
+                  ? 'حلقة فحص متوازية رقم 1 (العملات الأعلى سيولة)'
+                  : 'حلقة فحص متوازية رقم 2 (العملات المتوسطة والواعدة)'}
+              </span>
+            </div>
           </div>
 
           <div className="flex items-center gap-2">
-            <span className="text-[11px] px-2.5 py-0.5 rounded-full bg-emerald-500/15 text-emerald-400 font-bold font-num border border-emerald-500/30">
-              {allEligibleSymbols.length} عملة (حجم ≥ 3M$)
+            <span className="text-[11px] px-2.5 py-1 rounded-full bg-emerald-500/15 text-emerald-400 font-bold font-num border border-emerald-500/30">
+              جاري مسح {allEligibleSymbols.length} عملة
             </span>
           </div>
         </div>
@@ -339,7 +360,9 @@ export const ScannerView: React.FC = () => {
           <div className="flex items-center justify-between text-[11px] mb-1.5">
             <span className="text-slate-300 font-bold flex items-center gap-1.5">
               <span className={`w-2 h-2 rounded-full ${scanProgress.isScanning ? 'bg-emerald-400 animate-ping' : 'bg-slate-500'}`} />
-              {scanProgress.isScanning ? `جارٍ المسح التلقائي: ${scanProgress.currentSymbol}` : 'المسح التلقائي مستمر في الخلفية'}
+              {scanProgress.isScanning
+                ? `جاري مسح ${scanProgress.currentSymbol || '...'} • الفحص نشط`
+                : 'المسح التلقائي مستمر في الخلفية'}
             </span>
             <span className="text-slate-400 font-num">
               {scanProgress.scannedCount} / {scanProgress.totalEligible || allEligibleSymbols.length}
@@ -795,7 +818,7 @@ export const ScannerView: React.FC = () => {
                   <div className="flex items-center gap-2">
                     {/* Automatic Bot Execution Status */}
                     {(() => {
-                      const pIds: PortfolioId[] = ['PORTFOLIO_A', 'PORTFOLIO_B', 'PORTFOLIO_C'];
+                      const pIds: StrategyId[] = ['STRATEGY_TREND', 'STRATEGY_REVERSION', 'STRATEGY_SCALP'];
                       const isOpenInActive = pIds.some((pid) =>
                         portfolios[pid]?.trades?.some((t) => t.symbol === item.symbol && t.status === 'OPEN')
                       );
@@ -807,7 +830,7 @@ export const ScannerView: React.FC = () => {
                               ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/40'
                               : 'bg-slate-800/80 text-slate-400 border border-slate-700/60'
                           }`}
-                          title="النظام يفتح الصفقات آلياً 100% في المحافظ الثلاث بمجرد تحقق الشروط"
+                          title="النظام يفتح الصفقات آلياً 100% في الاستراتيجيات الثلاث بمجرد تحقق الشروط"
                         >
                           <Zap className="w-3 h-3 text-emerald-400" />
                           <span>{isOpenInActive ? 'مفتوحة آلياً ✓' : 'تنفيذ آلي 100%'}</span>

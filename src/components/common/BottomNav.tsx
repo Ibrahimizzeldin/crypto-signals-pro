@@ -3,15 +3,15 @@ import { useCryptoStore, NavTab } from '../../store/useCryptoStore';
 import {
   TrendingUp,
   ScanLine,
+  Radar,
   Activity,
-  Sparkles,
   BrainCircuit,
 } from 'lucide-react';
 
 export const BottomNav: React.FC = () => {
-  const { activeTab, setActiveTab, signalCache, portfolios } = useCryptoStore();
+  const { activeTab, setActiveTab, portfolios } = useCryptoStore();
 
-  // Active open trades count across all 3 portfolios
+  // Active open trades count across all 3 strategies
   let openTradesCount = 0;
   if (portfolios) {
     Object.values(portfolios).forEach((p) => {
@@ -20,11 +20,6 @@ export const BottomNav: React.FC = () => {
       }
     });
   }
-
-  // Active recommendations count (confidence >= 70, not ignored)
-  const activeRecommendationsCount = Object.values(signalCache).filter(
-    (s) => (s.scoreBreakdown?.totalScore ?? s.confidence) >= 70 && s.executionStatus !== 'IGNORE'
-  ).length;
 
   // The 5 canonical navigation tabs in strict requested order
   const navItems: { id: NavTab; label: string; icon: React.ReactNode; badge?: number }[] = [
@@ -35,20 +30,19 @@ export const BottomNav: React.FC = () => {
     },
     {
       id: 'scanner',
-      label: 'الماسح',
+      label: 'الماسح 1',
       icon: <ScanLine className="w-5 h-5" />,
+    },
+    {
+      id: 'scanner2',
+      label: 'الماسح 2',
+      icon: <Radar className="w-5 h-5" />,
     },
     {
       id: 'active',
       label: 'نشطة',
       icon: <Activity className="w-5 h-5" />,
       badge: openTradesCount > 0 ? openTradesCount : undefined,
-    },
-    {
-      id: 'recommendations',
-      label: 'التوصيات',
-      icon: <Sparkles className="w-5 h-5" />,
-      badge: activeRecommendationsCount > 0 ? activeRecommendationsCount : undefined,
     },
     {
       id: 'expert',
@@ -63,7 +57,6 @@ export const BottomNav: React.FC = () => {
         {navItems.map((item) => {
           const isActive =
             activeTab === item.id ||
-            (item.id === 'recommendations' && activeTab === 'alerts') ||
             (item.id === 'active' && activeTab === 'performance') ||
             (item.id === 'expert' && activeTab === 'journal');
 
@@ -80,7 +73,7 @@ export const BottomNav: React.FC = () => {
               <div className="relative">
                 {item.icon}
                 {item.badge !== undefined && (
-                  <span className="absolute -top-1 -right-2 min-w-4 h-4 px-1 rounded-full bg-amber-500 text-black text-[9px] font-black flex items-center justify-center">
+                  <span className="absolute -top-1 -right-2 min-w-4 h-4 px-1 rounded-full bg-emerald-500 text-black text-[9px] font-black flex items-center justify-center">
                     {item.badge}
                   </span>
                 )}
@@ -96,3 +89,4 @@ export const BottomNav: React.FC = () => {
     </nav>
   );
 };
+

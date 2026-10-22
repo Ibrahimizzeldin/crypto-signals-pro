@@ -1,11 +1,11 @@
 import React from 'react';
 import { useCryptoStore } from '../../store/useCryptoStore';
-import { PortfolioId } from '../../types/crypto';
-import { PORTFOLIO_CONFIGS } from '../../services/paperTradingEngine';
+import { StrategyId } from '../../types/crypto';
+import { STRATEGY_CONFIGS } from '../../services/paperTradingEngine';
 import { TrendingUp, TrendingDown, Zap, Activity } from 'lucide-react';
 
 interface TriplePortfolioTopBarProps {
-  onNavigateToPortfolio?: (id: PortfolioId) => void;
+  onNavigateToPortfolio?: (id: StrategyId) => void;
   className?: string;
 }
 
@@ -19,53 +19,56 @@ export const TriplePortfolioTopBar: React.FC<TriplePortfolioTopBarProps> = ({
     setActivePortfolioId,
     setActiveTab,
     setDetailModalOpen,
-    maxConcurrentTradesPerPortfolio,
   } = useCryptoStore();
 
-  const handleCardClick = (portfolioId: PortfolioId) => {
-    setActivePortfolioId(portfolioId);
-    setActiveTab('performance');
+  const handleCardClick = (strategyId: StrategyId) => {
+    setActivePortfolioId(strategyId);
+    setActiveTab('active');
     setDetailModalOpen(false);
     if (onNavigateToPortfolio) {
-      onNavigateToPortfolio(portfolioId);
+      onNavigateToPortfolio(strategyId);
     }
   };
 
-  const pA = portfolios.PORTFOLIO_A;
-  const pB = portfolios.PORTFOLIO_B;
-  const pC = portfolios.PORTFOLIO_C;
+  const pTrend = portfolios.STRATEGY_TREND;
+  const pRev = portfolios.STRATEGY_REVERSION;
+  const pScalp = portfolios.STRATEGY_SCALP;
 
   const cardConfigs: Array<{
-    id: PortfolioId;
+    id: StrategyId;
     label: string;
+    sublabel: string;
     leverage: number;
     badgeColor: string;
     glowColor: string;
-    portfolio: typeof pA;
+    portfolio: typeof pTrend;
   }> = [
     {
-      id: 'PORTFOLIO_A',
-      label: 'A 100x',
-      leverage: 100,
-      badgeColor: 'border-rose-500/40 text-rose-400 bg-rose-500/10',
-      glowColor: 'hover:border-rose-500/50 hover:shadow-rose-950/20',
-      portfolio: pA,
-    },
-    {
-      id: 'PORTFOLIO_B',
-      label: 'B 50x',
-      leverage: 50,
-      badgeColor: 'border-sky-500/40 text-sky-400 bg-sky-500/10',
-      glowColor: 'hover:border-sky-500/50 hover:shadow-sky-950/20',
-      portfolio: pB,
-    },
-    {
-      id: 'PORTFOLIO_C',
-      label: 'C 25x',
+      id: 'STRATEGY_TREND',
+      label: 'Trend',
+      sublabel: 'تتبع الترند',
       leverage: 25,
-      badgeColor: 'border-emerald-500/40 text-emerald-400 bg-emerald-500/10',
-      glowColor: 'hover:border-emerald-500/50 hover:shadow-emerald-950/20',
-      portfolio: pC,
+      badgeColor: 'border-indigo-500/40 text-indigo-400 bg-indigo-500/10',
+      glowColor: 'hover:border-indigo-500/50 hover:shadow-indigo-950/20',
+      portfolio: pTrend,
+    },
+    {
+      id: 'STRATEGY_REVERSION',
+      label: 'Reversion',
+      sublabel: 'الارتداد',
+      leverage: 25,
+      badgeColor: 'border-cyan-500/40 text-cyan-400 bg-cyan-500/10',
+      glowColor: 'hover:border-cyan-500/50 hover:shadow-cyan-950/20',
+      portfolio: pRev,
+    },
+    {
+      id: 'STRATEGY_SCALP',
+      label: 'Scalp',
+      sublabel: 'المضاربة (5m)',
+      leverage: 25,
+      badgeColor: 'border-amber-500/40 text-amber-400 bg-amber-500/10',
+      glowColor: 'hover:border-amber-500/50 hover:shadow-amber-950/20',
+      portfolio: pScalp,
     },
   ];
 
@@ -126,7 +129,7 @@ export const TriplePortfolioTopBar: React.FC<TriplePortfolioTopBarProps> = ({
               key={card.id}
               onClick={() => handleCardClick(card.id)}
               className={`flex flex-col items-center justify-between p-2 rounded-xl bg-slate-900/90 border border-slate-800/90 ${card.glowColor} hover:bg-slate-800/90 transition-all text-center group cursor-pointer shadow-sm relative overflow-hidden`}
-              title={`عرض تفاصيل ${PORTFOLIO_CONFIGS[card.id].name} (Cross Margin)`}
+              title={`عرض تفاصيل ${STRATEGY_CONFIGS[card.id].name} (25x Leverage)`}
             >
               {/* Header Badge */}
               <div className="flex items-center justify-between w-full mb-1">
@@ -135,7 +138,7 @@ export const TriplePortfolioTopBar: React.FC<TriplePortfolioTopBarProps> = ({
                 >
                   [{card.label}]
                 </span>
-                <span className="text-[9px] text-slate-400 font-num font-medium">Cross</span>
+                <span className="text-[9px] text-slate-400 font-num font-medium">25x</span>
               </div>
 
               {/* Equity الحالي (Big number in Red/Green) */}
@@ -177,7 +180,7 @@ export const TriplePortfolioTopBar: React.FC<TriplePortfolioTopBarProps> = ({
                 </div>
                 <div className="flex items-center justify-between">
                   <span className="text-slate-500">التعرض الكلي:</span>
-                  <span className="text-amber-400 font-bold">${card.openTradesCount * 1000}</span>
+                  <span className="text-amber-400 font-bold">${card.openTradesCount * 250}</span>
                 </div>
                 <div className="flex items-center justify-between">
                   <span className="text-slate-500">عائم:</span>
@@ -196,7 +199,7 @@ export const TriplePortfolioTopBar: React.FC<TriplePortfolioTopBarProps> = ({
                 <div className="flex items-center justify-between pt-0.5 border-t border-slate-800/40">
                   <span className="text-slate-500">الصفقات:</span>
                   {(() => {
-                    const portMax = PORTFOLIO_CONFIGS[card.id].maxConcurrentTrades;
+                    const portMax = STRATEGY_CONFIGS[card.id].maxConcurrentTrades;
                     return (
                       <span
                         className={`font-black text-[9px] ${

@@ -255,20 +255,31 @@ export interface MarketRegimeInfo {
   updatedAt: number;
 }
 
-export type PortfolioId = 'PORTFOLIO_A' | 'PORTFOLIO_B' | 'PORTFOLIO_C';
+export type StrategyId = 'STRATEGY_TREND' | 'STRATEGY_REVERSION' | 'STRATEGY_SCALP';
+export type PortfolioId = StrategyId;
 
-export interface PortfolioConfig {
-  id: PortfolioId;
-  name: string; // e.g. 'المحفظة A (الرافعة 100x)'
-  shortName: string; // 'المحفظة A'
-  leverage: number; // 100, 50, 25
-  marginPerTrade: number; // 10, 20, 40
-  positionSize: number; // 1000
-  maxConcurrentTrades: number; // 20 for A, 15 for B, 10 for C
-  liquidationDistancePercent: number;
-  badgeColor: string; // 'rose' | 'amber' | 'emerald'
+export interface StrategyConfig {
+  id: StrategyId;
+  strategyNumber: 1 | 2 | 3;
+  name: string;
+  nameArabic: string;
+  shortName: string;
+  shortNameEn: string;
+  type: 'TREND_FOLLOWING' | 'MEAN_REVERSION' | 'SCALPING';
+  targetPatternDesc: string;
+  leverage: number; // Fixed 25x
+  riskPerTradePercent: number; // 1%
+  marginPerTrade: number; // $10 per trade (1% of $1,000)
+  positionSize: number; // $250 ($10 * 25x)
+  maxConcurrentTrades: number;
+  liquidationDistancePercent: number; // 4.0%
+  badgeColor: string;
+  badgeBg: string;
+  badgeBorder: string;
   description: string;
 }
+
+export type PortfolioConfig = StrategyConfig;
 
 export type PaperTradeStatus = 'PENDING' | 'OPEN' | 'CLOSED' | 'EXPIRED';
 
