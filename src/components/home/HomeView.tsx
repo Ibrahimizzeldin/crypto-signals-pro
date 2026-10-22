@@ -188,26 +188,6 @@ export const HomeView: React.FC = () => {
         </div>
       )}
 
-      {/* 2. High-Impact News Warning (with 15 min auto-resume) */}
-      {isNewsPaused && (
-        <div className="p-3 rounded-2xl bg-amber-950/40 border border-amber-500/50 text-amber-200 text-xs flex items-center justify-between gap-2.5 shadow-md">
-          <div className="flex items-center gap-2.5">
-            <span className="text-base shrink-0">⚠️</span>
-            <div>
-              <span className="font-bold block">توقف مؤقت للإشارات - خبر مهم في السوق!</span>
-              <span className="text-[11px] text-amber-300">
-                {newsPausedHeadline || 'صدور بيانات أو أخبار عالية التأثير - تعليق الصفقات التلقائية لمدة 15 دقيقة كحد أقصى.'}
-              </span>
-            </div>
-          </div>
-          <button
-            onClick={() => setIsNewsModalOpen(true)}
-            className="px-2.5 py-1 rounded-lg bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 text-[10px] font-bold border border-amber-500/30 whitespace-nowrap transition"
-          >
-            تفاصيل
-          </button>
-        </div>
-      )}
 
       {/* Market News Button - Accessible directly from Home Page */}
       <div className="flex items-center gap-2">

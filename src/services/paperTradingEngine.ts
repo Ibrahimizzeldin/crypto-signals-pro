@@ -292,10 +292,7 @@ export function canOpenNewTrade(
     return { allowed: false, reason: 'التداول الافتراضي التلقائي معطل حالياً' };
   }
 
-  // 3. Check News pause (max 15 mins)
-  if (isNewsPaused) {
-    return { allowed: false, reason: 'تم تعليق الصفقات مؤقتاً بسبب أخبار عاجلة عالية التأثير (حتى 15 دقيقة)' };
-  }
+  // 3. News Filter completely deleted - trade opens directly regardless of any news
 
   // 4. Check Market Regime (Bypassed if Instant Execution score >= 70)
   const isInstant = signalScore >= 70;

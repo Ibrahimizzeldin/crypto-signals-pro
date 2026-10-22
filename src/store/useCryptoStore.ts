@@ -272,11 +272,11 @@ export const useCryptoStore = create<CryptoState>()(
       },
 
       setMarketRegime: (regime) => set({ marketRegime: regime }),
-      setNewsPaused: (paused, headline = '') =>
+      setNewsPaused: (_paused, _headline = '') =>
         set({
-          isNewsPaused: paused,
-          newsPausedHeadline: headline,
-          newsPausedUntil: paused ? Date.now() + 15 * 60 * 1000 : 0,
+          isNewsPaused: false,
+          newsPausedHeadline: '',
+          newsPausedUntil: 0,
         }),
 
       setAutoTradingEnabled: (enabled) =>
@@ -748,14 +748,6 @@ export const useCryptoStore = create<CryptoState>()(
 
         const side = analysis.overallDirection === 'BULLISH' ? 'LONG' : 'SHORT';
 
-        // Auto-resume from news pause if 15 minutes expired
-        let effectiveNewsPaused = isNewsPaused;
-        const pauseUntil = get().newsPausedUntil;
-        if (effectiveNewsPaused && pauseUntil && Date.now() >= pauseUntil) {
-          set({ isNewsPaused: false, newsPausedHeadline: '', newsPausedUntil: 0 });
-          effectiveNewsPaused = false;
-        }
-
         // 5. Strategy Routing Logic (Trading Lab Rule):
         // * Breakout -> Strategy 1: Trend Following
         // * Retest / Pullback / Range -> Strategy 2: Mean Reversion
@@ -781,7 +773,7 @@ export const useCryptoStore = create<CryptoState>()(
           p.trades,
           p.account,
           marketRegime,
-          effectiveNewsPaused,
+          false, // News filter completely disabled
           cfg.marginPerTrade,
           score,
           9999,

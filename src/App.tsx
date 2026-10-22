@@ -90,11 +90,9 @@ export default function App() {
         setMarketRegime(regime);
       }
 
-      // Check high impact news
-      if (newsList && newsList.length > 0) {
-        const newsCheck = checkHighImpactNews(newsList);
-        setNewsPaused(newsCheck.isPaused, newsCheck.headline);
-      }
+      // News pause completely disabled per user request
+      setNewsPaused(false, '');
+
       // Start continuous background auto-scanner across all Binance Futures pairs (>= 3M vol)
       scannerEngine.startBackgroundScanner();
     }
@@ -113,30 +111,17 @@ export default function App() {
       }
     }, 5000);
 
-    // 3. Periodic Market Regime & News check every 60 seconds
+    // 3. Periodic Market Regime check every 60 seconds
     const regimeNewsInterval = setInterval(async () => {
       try {
-        const [btcKlines, newsList] = await Promise.all([
+        const [btcKlines] = await Promise.all([
           fetchKlines('BTCUSDT', '1h', 250).catch(() => []),
-          fetchCryptoNews().catch(() => []),
         ]);
 
         if (isMounted && btcKlines && btcKlines.length > 0) {
           const btcPrice = btcKlines[btcKlines.length - 1].close;
           const regime = detectMarketRegime(btcKlines, btcPrice);
           setMarketRegime(regime);
-        }
-
-        if (isMounted) {
-          const storeState = useCryptoStore.getState();
-          if (storeState.isNewsPaused && storeState.newsPausedUntil && Date.now() >= storeState.newsPausedUntil) {
-            setNewsPaused(false, '');
-          } else if (newsList && newsList.length > 0) {
-            const newsCheck = checkHighImpactNews(newsList);
-            if (newsCheck.isPaused && !storeState.isNewsPaused) {
-              setNewsPaused(true, newsCheck.headline);
-            }
-          }
         }
       } catch (e) {
         // ignore

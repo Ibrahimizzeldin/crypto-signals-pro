@@ -329,7 +329,7 @@ export const ScannerView: React.FC<ScannerViewProps> = ({ scannerId = 1 }) => {
   // Auto-open top instant execution signals (Score >= 70 / READY_NOW) into their respective strategies
   useEffect(() => {
     const readySignals = scannedItems.filter(
-      (item) => item.isReadyNow && item.totalScore >= 70 && !item.rejectionReason
+      (item) => item.isReadyNow && item.totalScore >= 70
     );
     if (readySignals.length === 0) return;
 
@@ -906,13 +906,6 @@ export const ScannerView: React.FC<ScannerViewProps> = ({ scannerId = 1 }) => {
                   </div>
                 </div>
 
-                {/* Visual Rejection Banner (Requirement 5) */}
-                {item.rejectionReason && (
-                  <div className="mt-2.5 px-3 py-1.5 rounded-xl bg-rose-500/15 border border-rose-500/40 text-rose-300 text-[11px] font-bold flex items-center gap-2 text-right">
-                    <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0" />
-                    <span>⚠️ سبب عدم التنفيذ: {item.rejectionReason}</span>
-                  </div>
-                )}
 
                 {/* Expandable Breakdown Drawer (The 8 Dimensions of 100 Points) */}
                 {isExpanded && item.scoreBreakdown && (
