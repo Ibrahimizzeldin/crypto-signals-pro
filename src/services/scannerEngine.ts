@@ -120,7 +120,12 @@ class DualAutoScannerEngine {
 
     try {
       const store = useCryptoStore.getState();
-      const currentPrice = store.tickers[symbol]?.lastPrice;
+      const liveTicker = store.tickers[symbol]?.lastPrice;
+      if (!liveTicker || liveTicker <= 0) {
+        // Strictly require live ticker price from WebSocket - never use candle close as entry price
+        return null;
+      }
+      const effectivePrice = liveTicker;
       const funding = store.fundingRates[symbol] ?? 0.0001;
 
       const [k15m, k1h, k4h, k1d] = await Promise.all([
@@ -131,8 +136,6 @@ class DualAutoScannerEngine {
       ]);
 
       if (!k15m || k15m.length === 0) return null;
-
-      const effectivePrice = currentPrice || k15m[k15m.length - 1]?.close || 100;
 
       const candleMap: Record<Timeframe, typeof k15m> = {
         '1m': [],
@@ -157,14 +160,8 @@ class DualAutoScannerEngine {
         timestamp: Date.now(),
       });
 
-      // Update signal cache in store
+      // Update signal cache in store (which evaluates once with live price)
       store.setSignalForSymbol(symbol, analysis);
-
-      // Auto evaluate & execute trade into matching strategy
-      const sc = analysis.scoreBreakdown?.totalScore ?? analysis.confidence;
-      if (sc >= 55 && (analysis.targets?.riskRewardRatio || 0) >= 1.5) {
-        store.evaluateAndExecuteSignal(analysis, '15m');
-      }
 
       return analysis;
     } catch (e) {

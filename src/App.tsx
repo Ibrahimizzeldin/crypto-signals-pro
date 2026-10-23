@@ -61,8 +61,8 @@ export default function App() {
   useEffect(() => {
     let isMounted = true;
 
-    // 0. Enforce Trading Lab: Start 100% clean with $1,000 per strategy and 0 trades
-    const cleanCheckKey = 'crypto_clean_trading_lab_v10_applied';
+    // 0. Enforce Trading Lab: Start 100% clean with $1,000 per strategy, 0 ghost trades, strictly real-time ticker
+    const cleanCheckKey = 'crypto_clean_trading_lab_v12_realtime_only_no_ghosts';
     if (typeof window !== 'undefined' && !window.localStorage.getItem(cleanCheckKey)) {
       useCryptoStore.getState().clearAllUserData();
       window.localStorage.setItem(cleanCheckKey, 'true');

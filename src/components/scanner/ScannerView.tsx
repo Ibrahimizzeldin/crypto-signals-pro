@@ -326,29 +326,6 @@ export const ScannerView: React.FC<ScannerViewProps> = ({ scannerId = 1 }) => {
     marketRegime,
   ]);
 
-  // Auto-open top instant execution signals (Score >= 70 / READY_NOW) into their respective strategies
-  useEffect(() => {
-    const readySignals = scannedItems.filter(
-      (item) => item.isReadyNow && item.totalScore >= 70
-    );
-    if (readySignals.length === 0) return;
-
-    const openSymbols = new Set(
-      Object.values(portfolios).flatMap((p) => p.trades.filter((t) => t.status === 'OPEN').map((t) => t.symbol))
-    );
-
-    // Auto-open up to 3 top ready signals that are not already open
-    let opened = 0;
-    for (const item of readySignals) {
-      if (opened >= 3) break;
-      if (!openSymbols.has(item.symbol)) {
-        openTradeManually(item.symbol, item.timeframe);
-        openSymbols.add(item.symbol);
-        opened++;
-      }
-    }
-  }, [scannedItems.length, tickers]);
-
   return (
     <div className="flex flex-col gap-4 p-4 pb-28 max-w-2xl mx-auto w-full text-right font-['Cairo',sans-serif]">
       {/* 1. Live Background Scanner Control Card */}

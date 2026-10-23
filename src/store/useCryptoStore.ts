@@ -328,7 +328,24 @@ export const useCryptoStore = create<CryptoState>()(
       openTradeManually: (symbol: string, timeframe: Timeframe = '15m') => {
         const { portfolios, tickers, signalCache, soundEnabled } = get();
         const cachedAnalysis = signalCache[symbol];
-        const livePrice = tickers[symbol]?.lastPrice || (cachedAnalysis?.currentPrice) || 100;
+        
+        // 1. Strict Requirement: Exclusively read from live ticker
+        const liveTicker = tickers[symbol]?.lastPrice;
+        if (!liveTicker || liveTicker <= 0) {
+          console.warn(`[Trade Engine] تم إلغاء فتح صفقة ${symbol}: لا يتوفر سعر لحظي مباشر (Ticker) من الـ WebSocket`);
+          return false;
+        }
+        const livePrice = liveTicker;
+
+        // 2. Strict 0.1% tolerance against signal price
+        if (cachedAnalysis?.targets?.entry && cachedAnalysis.targets.entry > 0) {
+          const diff = (Math.abs(livePrice - cachedAnalysis.targets.entry) / cachedAnalysis.targets.entry) * 100;
+          if (diff > 0.1) {
+            console.warn(`[Trade Engine] تم إلغاء صفقة ${symbol}: فارق السعر (${diff.toFixed(2)}%) بين الإشارة واللحظي تجاوز 0.1%`);
+            return false;
+          }
+        }
+
         const side = cachedAnalysis ? (cachedAnalysis.overallDirection === 'BULLISH' ? 'LONG' : 'SHORT') : 'LONG';
         const isLong = side === 'LONG';
 
@@ -692,10 +709,12 @@ export const useCryptoStore = create<CryptoState>()(
       evaluateAndExecuteSignal: (analysis, timeframe = '15m') => {
         const { portfolios, marketRegime, isNewsPaused, soundEnabled, tickers, signalCache } = get();
 
-        // 1. Live Real-Time Price from WebSocket
-        const livePrice = tickers[analysis.symbol]?.lastPrice || analysis.currentPrice || analysis.targets.entry;
-        const score = analysis.scoreBreakdown?.totalScore ?? analysis.confidence;
-        const isInstantExecution = (analysis.executionStatus === 'READY_NOW') || score >= 70;
+        // 1. Live Real-Time Price from WebSocket (Exclusively from tickers - candle prices forbidden)
+        const liveTicker = tickers[analysis.symbol]?.lastPrice;
+        if (!liveTicker || liveTicker <= 0) {
+          return false;
+        }
+        const livePrice = liveTicker;
 
         const recordRejection = (reason: string) => {
           console.warn(`[Trade Engine] محاولة فتح صفقة ${analysis.symbol}، السعر: $${livePrice}، النتيجة: مرفوضة بسبب ${reason}`);
@@ -711,6 +730,18 @@ export const useCryptoStore = create<CryptoState>()(
           });
           return false;
         };
+
+        // Strict 0.1% tolerance between signal price and real-time live price
+        const signalPrice = analysis.targets.entry;
+        if (signalPrice > 0) {
+          const priceDiffPercent = (Math.abs(livePrice - signalPrice) / signalPrice) * 100;
+          if (priceDiffPercent > 0.1) {
+            return recordRejection(`فارق السعر (${priceDiffPercent.toFixed(2)}%) بين الإشارة ($${signalPrice}) واللحظي ($${livePrice}) تجاوز 0.1% - تم إلغاء الصفقة`);
+          }
+        }
+
+        const score = analysis.scoreBreakdown?.totalScore ?? analysis.confidence;
+        const isInstantExecution = (analysis.executionStatus === 'READY_NOW') || score >= 70;
 
         // 2. Strict verification: only verified Crypto Futures contracts
         if (!isCryptoFuturesSymbol(analysis.symbol)) {
@@ -764,6 +795,13 @@ export const useCryptoStore = create<CryptoState>()(
         const p = portfolios[targetStrategyId];
         if (!p) return recordRejection('استراتيجية غير متوفرة');
         const cfg = PORTFOLIO_CONFIGS[targetStrategyId];
+
+        // 6. Strict Duplicate Check on same coin within this strategy
+        const isAlreadyOpen = p.trades.some((t) => (t.status === 'OPEN' || t.status === 'PENDING') && t.symbol === analysis.symbol);
+        if (isAlreadyOpen) {
+          return recordRejection(`توجد صفقة مفتوحة بالفعل لعملة ${analysis.symbol} في استراتيجية ${cfg.shortName}`);
+        }
+
         const slDist = Math.abs(analysis.targets.slPercent);
 
         const check = canOpenNewTrade(
@@ -776,7 +814,7 @@ export const useCryptoStore = create<CryptoState>()(
           false, // News filter completely disabled
           cfg.marginPerTrade,
           score,
-          9999,
+          9999, // Unlimited different coins
           undefined,
           targetStrategyId,
           slDist,
@@ -789,14 +827,7 @@ export const useCryptoStore = create<CryptoState>()(
 
         // Create trade for target strategy
         const newTrade = createPaperTradeForPortfolio(analysis, targetStrategyId, timeframe, livePrice);
-        const updatedPortfolios = { ...portfolios };
-
         if (newTrade.status === 'EXPIRED') {
-          updatedPortfolios[targetStrategyId] = {
-            ...p,
-            trades: [newTrade, ...p.trades],
-          };
-          set({ portfolios: updatedPortfolios });
           return recordRejection(newTrade.notes || 'انتهت صلاحية أمر الدخول بسبب فارق السعر');
         }
 
@@ -846,6 +877,7 @@ export const useCryptoStore = create<CryptoState>()(
           pendingPositionsCount: newTrades.filter((t) => t.status === 'PENDING').length,
         };
 
+        const updatedPortfolios = { ...portfolios };
         updatedPortfolios[targetStrategyId] = {
           ...p,
           account: newAccount,
@@ -1408,19 +1440,20 @@ export const useCryptoStore = create<CryptoState>()(
       },
     }),
     {
-      name: 'crypto-signals-pro-v10-trading-lab',
-      version: 10,
-      migrate: (persistedState: any, version: number) => {
-        if (version < 10 || !persistedState?.portfolios?.STRATEGY_TREND) {
+      name: 'crypto-signals-pro-v12-realtime-only',
+      version: 12,
+      migrate: (_persistedState: any, version: number) => {
+        if (version < 12) {
           const freshPortfolios = createInitialPortfolios();
           return {
-            ...persistedState,
+            ..._persistedState,
             portfolios: freshPortfolios,
             activePortfolioId: 'STRATEGY_TREND',
             closedTradesHistory: [],
+            signalCache: {},
           };
         }
-        return persistedState;
+        return _persistedState;
       },
       partialize: (state) => ({
         watchlist: state.watchlist,

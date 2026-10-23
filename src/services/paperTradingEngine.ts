@@ -362,24 +362,24 @@ export function createPaperTradeForPortfolio(
   const side = analysis.overallDirection === 'BULLISH' ? 'LONG' : 'SHORT';
   const isBullish = side === 'LONG';
 
-  // 1. Signal price vs Real-time live price from WebSocket
+  // 1. Strict Requirement: Entry price must be exclusively read from real-time WebSocket ticker
+  // Forbidden to fall back to historical candle or stale prices!
   const signalPrice = analysis.targets.entry;
-  const livePrice = liveMarketPrice && liveMarketPrice > 0 ? liveMarketPrice : (analysis.currentPrice || signalPrice);
+  const livePrice = liveMarketPrice && liveMarketPrice > 0 ? liveMarketPrice : 0;
 
   // Precision formatting
   const precision = livePrice > 0 ? (livePrice < 1 ? 4 : livePrice < 10 ? 3 : 2) : 2;
   const roundDec = (val: number) => Number(val.toFixed(precision));
 
-  // 2. Execution determination:
-  // If it's INSTANT execution ('تنفيذ فوري' / READY_NOW / Total Score >= 70):
-  // Execute immediately at market live price without expiration!
-  const priceDiffPercent = signalPrice > 0 ? Number(((Math.abs(livePrice - signalPrice) / signalPrice) * 100).toFixed(2)) : 0;
-  const isInstantExecution = isReadyNow || (analysis.scoreBreakdown?.totalScore ?? analysis.confidence) >= 70;
-  // Widen price tolerance from 0.2% to 1.5% for pending signals, and NEVER expire instant execution signals
-  const hasExpired = !isInstantExecution && priceDiffPercent > 1.5;
+  // 2. Strict 0.1% price tolerance:
+  // If price difference between signal price and real-time live price exceeds 0.1%, cancel the trade immediately!
+  const priceDiffPercent = signalPrice > 0 && livePrice > 0
+    ? Number(((Math.abs(livePrice - signalPrice) / signalPrice) * 100).toFixed(4))
+    : 999;
+  const hasExpired = livePrice <= 0 || priceDiffPercent > 0.1;
 
-  let actualEntryPrice = roundDec(livePrice);
-  const status: PaperTradeStatus = isInstantExecution ? 'OPEN' : (hasExpired ? 'EXPIRED' : 'PENDING');
+  let actualEntryPrice = roundDec(livePrice > 0 ? livePrice : signalPrice);
+  const status: PaperTradeStatus = hasExpired ? 'EXPIRED' : 'OPEN';
   const closeReason: PaperCloseReason | undefined = hasExpired ? 'EXPIRED' : undefined;
 
   // 3. Dynamic recalculation of TP1/TP2/TP3 and SL based on actual live entry price
@@ -393,7 +393,7 @@ export function createPaperTradeForPortfolio(
   let tp3 = analysis.targets.tp3;
   let sl = analysis.targets.sl;
 
-  if (!hasExpired) {
+  if (!hasExpired && livePrice > 0) {
     if (isBullish) {
       tp1 = roundDec(actualEntryPrice * (1 + Math.abs(tp1Percent) / 100));
       tp2 = roundDec(actualEntryPrice * (1 + Math.abs(tp2Percent) / 100));
@@ -442,7 +442,9 @@ export function createPaperTradeForPortfolio(
     : '';
 
   const notes = hasExpired
-    ? `فاتت الصفقة (Expired): فارق السعر (${priceDiffPercent}% > 1.5%) بين الإشارة (${formatPrice(signalPrice)}) والحقيقي (${formatPrice(livePrice)})`
+    ? (livePrice <= 0
+        ? `ألغيت الصفقة: لا يتوفر سعر لحظي مباشر (Ticker) من الـ WebSocket`
+        : `ألغيت الصفقة: فارق السعر (${priceDiffPercent.toFixed(2)}% > 0.1%) بين الإشارة (${formatPrice(signalPrice)}) واللحظي (${formatPrice(livePrice)})`)
     : `${analysis.patternNameArabic} • ${typeInfo.label} • ${slCalculationReason} • سعر الإشارة: ${formatPrice(signalPrice)} | سعر الدخول الفعلي: ${formatPrice(actualEntryPrice)}${liqNote}`;
 
   return {
